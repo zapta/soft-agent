@@ -3,6 +3,7 @@ name = "soft-agent"
 version = "0.1.0"
 edition = "2024"
 description = "Experimental extensions to Logix Engine: the engine's MCP tools, plus tools of our own."
+license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]

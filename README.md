@@ -70,3 +70,7 @@ logix-engine = { path = "/absolute/path/to/logix-engine" }
 cargo build --release
 cargo clippy --release
 ```
+
+## License
+
+[MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, the same as Logix Engine.
