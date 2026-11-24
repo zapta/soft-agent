@@ -17,9 +17,17 @@ the overview, how to run it and how to bump the engine.
 
 ## Rules
 
+- **No changes to Open Logix repos without explicit permission.** While
+  working on soft-agent, make no change to any `openlogix` repo, on GitHub or
+  in a local clone: no file edits, commits, branches, pushes, pull requests,
+  issues, comments, releases or settings. Reading them is fine. Do it only
+  when the user explicitly asks or approves that specific change in this
+  session. This overrides any broader permission for Open Logix repos given
+  elsewhere, such as in user-level instructions.
 - Don't change engine behavior by patching around it here. Extensions add
-  tools (or wrap the server); a change the engine itself needs goes to the
-  engine repo, following its own CLAUDE.md.
+  tools (or wrap the server); a change the engine itself needs is proposed to
+  the user, and made in the engine repo (following its own CLAUDE.md) only
+  with their permission, per the rule above.
 - Extension tool names must not clash with engine tool names (the engine's
   `tools::all_definitions()`).
 - Write extensions so they could move into the engine later: same tool
