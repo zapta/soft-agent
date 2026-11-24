@@ -1,0 +1,37 @@
+[package]
+name = "soft-agent"
+version = "0.1.0"
+edition = "2024"
+description = "Experimental extensions to Logix Engine: the engine's MCP tools, plus tools of our own."
+publish = false
+
+[dependencies]
+# Logix Engine, used as a library: its tools, state, packages and catalog.
+# Pinned to a commit; bump `rev` to pick up newer engine changes. To build
+# against a local clone instead, see README.md, Engine version.
+logix-engine = { git = "https://github.com/openlogix/logix-engine", rev = "566ffa87d48ca210d251150a068b1d5f93e23a5c" }
+# The same major versions as the engine, so the types we share with it
+# (rmcp's model, schemars' schemas) are the same types.
+clap = { version = "4", features = ["derive"] }
+log = { version = "0.4", features = ["std"] }
+rmcp = { version = "3.8", features = ["server", "transport-io"] }
+schemars = { version = "1", features = ["indexmap2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+
+[profile.release]
+strip = true
+
+# From the engine's Cargo.toml (profiles of a dependency don't apply to the
+# crate that uses it, so they are repeated here).
+[profile.dev.package."*"]
+debug = false
+
+# QuickJS, which lays out the engine's diagrams, optimized even in debug
+# builds (several times faster).
+[profile.dev.package.rquickjs-sys]
+opt-level = 3
+
+[profile.dev.package.rquickjs-core]
+opt-level = 3

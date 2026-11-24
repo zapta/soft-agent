@@ -1,0 +1,4 @@
+[toolchain]
+# The same version as Logix Engine's rust-toolchain.toml; bump them together.
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]

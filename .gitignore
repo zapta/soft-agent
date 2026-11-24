@@ -1,0 +1,13 @@
+# Cargo
+/target
+**/*.rs.bk
+rustc-ice-*.txt
+
+# Local overrides, such as building against a local engine clone
+# (README.md, Engine version).
+/.cargo/config.toml
+
+# Editors and macOS
+*.swp
+*.swo
+.DS_Store
