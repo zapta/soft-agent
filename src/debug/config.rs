@@ -27,10 +27,9 @@ pub struct DebugConfig {
     /// on the board's clock pin, whose frequency the catalog gives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock_mhz: Option<f64>,
-    /// How the debugger reaches the host. Omitted or {} means the board's
-    /// UART at 115200 baud.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub uplink: Option<Uplink>,
+    /// How the debugger reaches the host: a UART, named as a resource of the
+    /// board, or by its pins.
+    pub uplink: Uplink,
     /// Nets the debugger reads.
     #[serde(default)]
     pub input: Vec<InputNet>,
@@ -43,19 +42,21 @@ pub struct DebugConfig {
     pub capture: Option<serde_json::Value>,
 }
 
-/// The link to the host.
+/// The link to the host: give resource, or tx and rx.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Uplink {
-    /// The kind of link: uart, the only one in version 1 and the default.
-    #[serde(default)]
+    /// The kind of link: uart, the only one in version 1.
     pub kind: UplinkKind,
-    /// The FPGA pin the debugger transmits on. Defaults to the board's UART
-    /// TX pin in the catalog.
+    /// The board's UART, by its resource name in the catalog (get_catalog's
+    /// resources), such as uart: the debugger uses its tx and rx pins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<String>,
+    /// Instead of resource, the FPGA pin the debugger transmits on, such as
+    /// a PMOD pin wired to a USB serial adapter's RX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx: Option<String>,
-    /// The FPGA pin the debugger receives on. Defaults to the board's UART
-    /// RX pin in the catalog.
+    /// Instead of resource, the FPGA pin the debugger receives on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rx: Option<String>,
     /// Bits per second. Defaults to 115200.
@@ -63,10 +64,9 @@ pub struct Uplink {
     pub baud: Option<u32>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum UplinkKind {
-    #[default]
     Uart,
 }
 
@@ -127,6 +127,19 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
     }
     if config.capture.is_some() {
         return Err("capture isn't supported yet: it comes in a later version.".into());
+    }
+    let u = &config.uplink;
+    match (&u.resource, &u.tx, &u.rx) {
+        (Some(_), None, None) | (None, Some(_), Some(_)) => {}
+        (Some(_), _, _) => {
+            return Err("uplink: give resource, or tx and rx, not both.".into());
+        }
+        (None, _, _) => {
+            return Err(
+                "uplink: name the board's UART as resource, such as \"resource\": \"uart\", or give both tx and rx pins."
+                    .into(),
+            );
+        }
     }
     if config.input.is_empty() && config.output.is_empty() {
         return Err("The file names no nets: add some to input or output.".into());
@@ -262,8 +275,7 @@ mod tests {
             r#"{
               "$schema": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json",
               "clock": "sys_clk",
-              // tx and rx can be left out
-              "uplink": { "kind": "uart", "tx": "6", "rx": "4", "baud": 115200 },
+              "uplink": { "kind": "uart", "resource": "uart", "baud": 115200 },
               "input": [ { "net": "count", "name": "counter" }, { "net": "blink" },
                          { "net": "u_ctrl.state" }, { "net": "gen_lane[2].u_lane.err" } ],
               /* a block comment */
@@ -279,25 +291,31 @@ mod tests {
     fn refuses_what_version_1_lacks() {
         for (text, why) in [
             (
-                r#"{"clock":"c","input":[{"net":"bus[7:4]"}]}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"bus[7:4]"}]}"#,
                 "selects bits",
             ),
-            (r#"{"clock":"c","input":[{"net":"u_*.x"}]}"#, "wildcard"),
             (
-                r#"{"clock":"c","input":[{"net":"a"}],"capture":{}}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"u_*.x"}]}"#,
+                "wildcard",
+            ),
+            (
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"a"}],"capture":{}}"#,
                 "capture",
             ),
-            (r#"{"clock":"c"}"#, "no nets"),
             (
-                r#"{"clock":"c","input":[{"net":"a"},{"net":"b","name":"a"}]}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"}}"#,
+                "no nets",
+            ),
+            (
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"a"},{"net":"b","name":"a"}]}"#,
                 "twice",
             ),
             (
-                r#"{"clock":"c","input":[{"net":"a"}],"$schema":"x"}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"a"}],"$schema":"x"}"#,
                 "$schema",
             ),
             (
-                r#"{"clock":"c","input":[{"net":"a"}],"extra":1}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"a"}],"extra":1}"#,
                 "unknown field",
             ),
         ] {
@@ -307,11 +325,27 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_uplink_is_the_default() {
-        let c = parse(r#"{"clock":"c","uplink":{},"input":[{"net":"main.a"}]}"#).unwrap();
-        let u = c.uplink.unwrap();
-        assert_eq!(u.kind, UplinkKind::Uart);
-        assert!(u.tx.is_none() && u.baud.is_none());
+    fn uplinks_name_a_resource_or_pins() {
+        let up = |u: &str| {
+            parse(&format!(
+                r#"{{"clock":"c","uplink":{u},"input":[{{"net":"main.a"}}]}}"#
+            ))
+        };
+        let u = up(r#"{"kind":"uart","resource":"uart"}"#).unwrap().uplink;
+        assert_eq!(
+            (u.kind, u.resource.as_deref()),
+            (UplinkKind::Uart, Some("uart"))
+        );
+        assert!(up(r#"{"kind":"uart","tx":"1","rx":"2"}"#).is_ok());
+        for (bad, why) in [
+            (r#"{}"#, "kind"),
+            (r#"{"kind":"uart"}"#, "resource"),
+            (r#"{"kind":"uart","tx":"1"}"#, "resource"),
+            (r#"{"kind":"uart","resource":"uart","tx":"1"}"#, "not both"),
+        ] {
+            let e = up(bad).unwrap_err();
+            assert!(e.contains(why), "{bad}: {e}");
+        }
     }
 
     #[test]

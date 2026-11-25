@@ -111,6 +111,9 @@ pub struct DebugMap {
     /// The debugger's clock port and its frequency in MHz.
     pub clock: String,
     pub clock_mhz: f64,
+    /// The board resource the UART is, when the debug file named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uplink_resource: Option<String>,
     /// The UART's speed and FPGA pins.
     pub baud: u32,
     pub tx_pin: String,

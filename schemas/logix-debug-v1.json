@@ -24,15 +24,8 @@
       "format": "double"
     },
     "uplink": {
-      "description": "How the debugger reaches the host. Omitted or {} means the board's\nUART at 115200 baud.",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Uplink"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "description": "How the debugger reaches the host: a UART, named as a resource of the\nboard, or by its pins.",
+      "$ref": "#/$defs/Uplink"
     },
     "input": {
       "description": "Nets the debugger reads.",
@@ -53,27 +46,34 @@
   },
   "additionalProperties": false,
   "required": [
-    "clock"
+    "clock",
+    "uplink"
   ],
   "$defs": {
     "Uplink": {
-      "description": "The link to the host.",
+      "description": "The link to the host: give resource, or tx and rx.",
       "type": "object",
       "properties": {
         "kind": {
-          "description": "The kind of link: uart, the only one in version 1 and the default.",
-          "$ref": "#/$defs/UplinkKind",
-          "default": "uart"
+          "description": "The kind of link: uart, the only one in version 1.",
+          "$ref": "#/$defs/UplinkKind"
+        },
+        "resource": {
+          "description": "The board's UART, by its resource name in the catalog (get_catalog's\nresources), such as uart: the debugger uses its tx and rx pins.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "tx": {
-          "description": "The FPGA pin the debugger transmits on. Defaults to the board's UART\nTX pin in the catalog.",
+          "description": "Instead of resource, the FPGA pin the debugger transmits on, such as\na PMOD pin wired to a USB serial adapter's RX.",
           "type": [
             "string",
             "null"
           ]
         },
         "rx": {
-          "description": "The FPGA pin the debugger receives on. Defaults to the board's UART\nRX pin in the catalog.",
+          "description": "Instead of resource, the FPGA pin the debugger receives on.",
           "type": [
             "string",
             "null"
@@ -89,7 +89,10 @@
           "minimum": 0
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ]
     },
     "UplinkKind": {
       "type": "string",

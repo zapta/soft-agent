@@ -120,9 +120,8 @@ An example, for the iCESugar v1.5:
 {
   "$schema": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json",
   "clock": "sys_clk",
-  // Everything in uplink can be left out, as "uplink": {}: kind defaults
-  // to uart, tx and rx to the board's UART, baud to 115200.
-  "uplink": { "kind": "uart", "tx": "6", "rx": "4", "baud": 115200 },
+  // The board's UART, by its resource name in the catalog (TX 6, RX 4).
+  "uplink": { "kind": "uart", "resource": "uart", "baud": 115200 },
   "input": [
     { "net": "main.count", "name": "counter" },
     { "net": "main.blink", "name": "blink" },
@@ -142,12 +141,17 @@ An example, for the iCESugar v1.5:
   the design; every input and output net must be on it. Its frequency comes
   from the board's clock resource when it is that pin, else from
   `clock_mhz` in the file.
-- `uplink.tx`, `uplink.rx`: the UART's pins. Each is optional and defaults to
-  the board's UART in the catalog (the iCESugar v1.5's TX 6 and RX 4), so most
-  files can leave them out; other pins are for a USB serial adapter on a
-  PMOD. `baud` defaults to 115200, and `kind` to `uart`, the only kind in
-  version 1. `"uplink": {}` takes every default; it says the same as leaving
-  `uplink` out, but shows a reader where the link is set.
+- `uplink`: required, so every file says where the debugger talks to the
+  host. `kind` is `uart`, the only kind in version 1. Then one of:
+  - `resource`: the board's UART by its resource name in the catalog
+    (`get_catalog` lists a board's resources), such as `uart` on the
+    iCESugar v1.5, whose pins are TX 6 and RX 4. A name that isn't a UART
+    of the board is an error that lists the board's UARTs.
+  - `tx` and `rx`: FPGA pins, for a USB serial adapter on a PMOD or a board
+    with no UART in the catalog.
+
+  `baud` is optional and defaults to 115200. The debug map records the
+  resource and the pins it resolved to.
 - `input` and `output`, from the debugger's side, as AMD's VIO names
   probe\_in and probe\_out: an input is a net it reads, an output a net it
   drives. `name` is the host's name for it (defaults to the net's path); widths

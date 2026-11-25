@@ -319,22 +319,62 @@ fn uplink(
             .as_object()
             .and_then(|m| m.values().find(|r| r["type"] == t).cloned())
     };
-    let uart = of_type("uart");
-    let pin_of = |given: Option<&String>, field: &str| -> Result<String, ToolError> {
-        given
-            .cloned()
-            .or_else(|| uart.as_ref().and_then(|u| u[field].as_str().map(str::to_string)))
-            .ok_or_else(|| {
-                ToolError::request(format!(
-                    "{} has no UART in the catalog: give the pins in the debug file, as uplink.tx and uplink.rx.",
+    let up = &config.uplink;
+    let (tx, rx) = match &up.resource {
+        Some(name) => {
+            let uarts: Vec<String> = resources
+                .as_object()
+                .map(|m| {
+                    m.iter()
+                        .filter(|(_, r)| r["type"] == "uart")
+                        .map(|(k, _)| k.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let known = if uarts.is_empty() {
+                format!(
+                    "{} has no UART in the catalog: give tx and rx pins instead",
                     board.name
-                ))
-            })
+                )
+            } else {
+                format!("{}'s UARTs: {}", board.name, uarts.join(", "))
+            };
+            let r = &resources[name.as_str()];
+            if r.is_null() {
+                return Err(ToolError::new(
+                    Category::Design,
+                    format!(
+                        "uplink.resource {name:?} isn't a resource of {}. {known}.",
+                        board.name
+                    ),
+                ));
+            }
+            if r["type"] != "uart" {
+                return Err(ToolError::new(
+                    Category::Design,
+                    format!(
+                        "uplink.resource {name:?} is of type {}, not uart. {known}.",
+                        r["type"].as_str().unwrap_or("resource")
+                    ),
+                ));
+            }
+            let pin = |f: &str| r[f].as_str().map(str::to_string);
+            match (pin("tx"), pin("rx")) {
+                (Some(tx), Some(rx)) => (tx, rx),
+                _ => {
+                    return Err(ToolError::request(format!(
+                        "The catalog's {name} on {} lacks its tx or rx pin: give tx and rx instead.",
+                        board.name
+                    )));
+                }
+            }
+        }
+        None => (
+            up.tx.clone().unwrap_or_default(),
+            up.rx.clone().unwrap_or_default(),
+        ),
     };
-    let up = config.uplink.as_ref();
-    let tx = pin_of(up.and_then(|u| u.tx.as_ref()), "tx")?;
-    let rx = pin_of(up.and_then(|u| u.rx.as_ref()), "rx")?;
-    let baud = up.and_then(|u| u.baud).unwrap_or(115_200);
+    let baud = up.baud.unwrap_or(115_200);
     if tx == rx {
         return Err(ToolError::request(
             "uplink.tx and uplink.rx are the same pin.",
@@ -680,6 +720,7 @@ fn layout(
         clock: config.clock.clone(),
         clock_mhz: link.clock_mhz,
         baud: link.baud,
+        uplink_resource: config.uplink.resource.clone(),
         tx_pin: link.tx.clone(),
         rx_pin: link.rx.clone(),
         read_bytes: read_bits.max(1).div_ceil(8),
@@ -923,7 +964,7 @@ mod tests {
     #[test]
     fn paths_start_with_the_top() {
         let c = config::parse(
-            r#"{"clock":"c","input":[{"net":"main.u.count"},{"net":"main.blink","name":"b"}]}"#,
+            r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"main.u.count"},{"net":"main.blink","name":"b"}]}"#,
         )
         .unwrap();
         let c = in_top(c, "main").unwrap();
@@ -932,7 +973,7 @@ mod tests {
         assert_eq!(c.input[1].name.as_deref(), Some("b"));
         for bad in ["u.count", "mainx.count", "main"] {
             let c =
-                config::parse(&format!(r#"{{"clock":"c","input":[{{"net":"{bad}"}}]}}"#)).unwrap();
+                config::parse(&format!(r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"input":[{{"net":"{bad}"}}]}}"#)).unwrap();
             assert!(
                 in_top(c, "main").unwrap_err().contains("must start"),
                 "{bad}"
