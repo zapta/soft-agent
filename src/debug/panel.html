@@ -47,7 +47,6 @@
   th { font-weight: 500; color: var(--muted); font-size: 12px; }
   td.mono, .mono { font-family: var(--mono); }
   td.num { text-align: right; }
-  td.name { cursor: help; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
   #tip {
     position: fixed; z-index: 10; pointer-events: none; display: none;
     padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line);
@@ -161,6 +160,15 @@
     return td;
   }
 
+  // A decimal cell as wide as the net's largest value, so the column keeps
+  // its width as the value changes (values over 53 bits show as "–").
+  function decCell(width) {
+    const td = cell("", "mono num dec");
+    const digits = width <= 53 ? Math.ceil(width * Math.log10(2)) : 1;
+    td.style.width = `calc(${Math.max(digits, 1)}ch + 30px)`;
+    return td;
+  }
+
   // The net's path, at once, next to the pointer (the browser's own title
   // text comes late or not at all).
   const tip = document.createElement("div");
@@ -186,7 +194,7 @@
       const tr = document.createElement("tr");
       tr.dataset.name = i.name;
       tr.append(nameCell(i.name, i.net), cell(String(i.width), "num"),
-        cell("", "mono num hex"), cell("", "mono num dec"), cell("", "mono num bits"));
+        cell("", "mono num hex"), decCell(i.width), cell("", "mono num bits"));
       ib.append(tr);
     }
     for (const o of info.drive) {
