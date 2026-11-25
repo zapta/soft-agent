@@ -20,7 +20,7 @@ rmcp = { version = "3.8", features = ["server", "transport-io"] }
 schemars = { version = "1", features = ["indexmap2"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "net", "sync"] }
 # For the debugger tools (src/debug), the engine's versions too.
 hex = "0.4"
 regex = "1"

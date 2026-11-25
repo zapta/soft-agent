@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::debug::build::DebugBuild;
+use crate::debug::panel::DebugPanel;
 use crate::debug::session::{self, DebugClose, DebugOpen, DebugRead, DebugWrite};
 
 /// The extension tools, in the order `tools/list` returns them (after the
@@ -27,6 +28,7 @@ pub fn all_definitions() -> Vec<Tool> {
         definition::<DebugRead>(),
         definition::<DebugWrite>(),
         definition::<DebugClose>(),
+        definition::<DebugPanel>(),
     ]
 }
 
@@ -63,6 +65,13 @@ pub async fn call(
             &display,
             parse_input::<DebugWrite>(arguments).and_then(session::write),
         ),
+        DebugPanel::NAME => {
+            let result = match parse_input::<DebugPanel>(arguments) {
+                Ok(input) => crate::debug::panel::run(input).await,
+                Err(e) => Err(e),
+            };
+            to_call_result(&display, result)
+        }
         DebugClose::NAME => to_call_result(
             &display,
             parse_input::<DebugClose>(arguments).and_then(session::close),

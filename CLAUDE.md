@@ -13,7 +13,8 @@ the overview, how to run it and how to bump the engine.
 - `src/server.rs`: wraps `logix_engine::server::EngineServer`. Engine tools are
   delegated to it unchanged; extension tools are handled first.
 - `src/tools.rs`: the extension tools, each a `logix_engine::tools::EngineTool`.
-- `src/debug/`: the in-design debugger; `docs/debugger.md` is its spec, kept
+- `src/debug/`: the in-design debugger (with `panel.rs` and `panel.html`,
+  the browser panel); `docs/debugger.md` is its spec, kept
   up to date with what is built. `src/debug/hdl/` has the debugger's Verilog
   and its testbench (run it with the toolchain's iverilog after changing the
   Verilog). `schemas/logix-debug-v1.json` is generated from

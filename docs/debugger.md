@@ -355,6 +355,7 @@ debug map. All are soft-agent extension tools in the engine's style
 | `debug_read` | Reads named nets, in one snapshot | Values as numbers and as bit strings, with widths |
 | `debug_write` | Writes a named net, or releases an override back to the design | Refuses names that aren't outputs |
 | `debug_close` | Ends the session | |
+| `debug_panel` | Opens an interactive panel for a session in the browser | Inputs refresh live; each output has drive and release controls (0 and 1 buttons for one bit) |
 
 - **The port is shared.** The debugger owns the UART while a session is open,
   so the engine's `open_serial` on the same port is refused in version 1. A
@@ -483,3 +484,13 @@ of a variable shift, and register the reply byte.
   25 byte times. The port isn't locked against the engine's serial tools, so
   don't open both on one port.
 - **Progress:** `debug_build` reports no progress while it runs yet.
+- **The panel:** `src/debug/panel.rs` serves `panel.html` from the
+  soft-agent process on 127.0.0.1, on a port the system picks, while
+  soft-agent runs. Every request needs the server's random token, which is
+  in the address `debug_panel` returns, and a `127.0.0.1` or `localhost`
+  Host header, so other web pages can't reach the board through it. Its API
+  is `GET /api/sessions`, `GET /api/state?session=` (the session's map, the
+  host's output values and a fresh snapshot) and `POST /api/write` (the
+  `debug_write` input). It polls at slightly irregular periods (about 4 per
+  second, 1 per second, or every 5 s), since a round period can match a
+  design's own and show the same phase at every read.

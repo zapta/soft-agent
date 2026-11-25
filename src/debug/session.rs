@@ -644,3 +644,81 @@ mod tests {
         assert_eq!(n.value, Some(29));
     }
 }
+
+// --- For the panel ----------------------------------------------------------
+
+/// A session's outputs as the host last set them, and its build, for the
+/// debug panel.
+#[derive(Debug, Serialize)]
+pub struct SessionInfo {
+    pub session: String,
+    pub port: String,
+    pub build_id: String,
+    pub board: String,
+    pub top_module: String,
+    pub inputs: Vec<NetInfo>,
+    pub outputs: Vec<OutputState>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OutputState {
+    pub name: String,
+    pub net: String,
+    pub width: usize,
+    pub mode: String,
+    /// True while the debugger drives it.
+    pub driven: bool,
+    /// The value the host last wrote, in hex.
+    pub hex: String,
+}
+
+pub fn info(id: &str) -> Result<SessionInfo, ToolError> {
+    with_session(id, |s| {
+        Ok(SessionInfo {
+            session: id.to_string(),
+            port: s.port_name.clone(),
+            build_id: s.map.build_id.clone(),
+            board: s.map.board.clone(),
+            top_module: s.map.top_module.clone(),
+            inputs: s
+                .map
+                .inputs
+                .iter()
+                .map(|i| NetInfo {
+                    name: i.name.clone(),
+                    net: i.net.clone(),
+                    width: i.width,
+                    mode: None,
+                })
+                .collect(),
+            outputs: s
+                .map
+                .outputs
+                .iter()
+                .map(|o| {
+                    let bits = protocol::get_bits(&s.wr, o.offset, o.width);
+                    OutputState {
+                        name: o.name.clone(),
+                        net: o.net.clone(),
+                        width: o.width,
+                        mode: o.mode.clone(),
+                        driven: o
+                            .enable_bit
+                            .is_none_or(|b| protocol::get_bits(&s.en, b, 1)[0]),
+                        hex: net_value(&o.name, &o.net, &bits).hex,
+                    }
+                })
+                .collect(),
+        })
+    })
+}
+
+/// The open sessions' IDs.
+pub fn ids() -> Vec<String> {
+    sessions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .keys()
+        .cloned()
+        .collect()
+}

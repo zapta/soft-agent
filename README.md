@@ -17,7 +17,8 @@ separate process:
   - The in-design debugger, [docs/debugger.md](docs/debugger.md):
     `debug_build` builds a design with a debugger in it, and `debug_open`,
     `debug_read`, `debug_write` and `debug_close` read and drive the
-    design's nets on the board over its UART. The debug file's schema is
+    design's nets on the board over its UART, and `debug_panel` opens an
+    interactive panel for them in the browser. The debug file's schema is
     [schemas/logix-debug-v1.json](schemas/logix-debug-v1.json).
 - The command line is the engine's (`--engine-folder`, `--log-level`, ...,
   see the engine's `docs/command-line.md`).
