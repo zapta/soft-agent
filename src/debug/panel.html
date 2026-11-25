@@ -43,6 +43,7 @@
   tr:last-child td { border-bottom: none; }
   th + th, td + td { border-left: 1px solid var(--line); }
   thead th { border-bottom: 1px solid var(--line); }
+  th.num { text-align: right; }
   th { font-weight: 500; color: var(--muted); font-size: 12px; }
   td.mono, .mono { font-family: var(--mono); }
   td.num { text-align: right; }
@@ -106,7 +107,7 @@
     <h2>Watch <span class="meta" id="stamp"></span> <span class="paused-note" id="paused-note" hidden>Paused</span></h2>
     <div class="card">
       <div class="scroll"><table id="watch">
-        <thead><tr><th>Name</th><th>Net</th><th class="num">Bits</th><th>Hex</th><th class="num">Decimal</th><th>Binary</th></tr></thead>
+        <thead><tr><th>Name</th><th>Net</th><th class="num">Bits</th><th class="num">Hex</th><th class="num">Decimal</th><th class="num">Binary</th></tr></thead>
         <tbody></tbody>
       </table></div>
       <div class="empty" id="no-watch" hidden>This build watches no nets.</div>
@@ -154,7 +155,7 @@
       const tr = document.createElement("tr");
       tr.dataset.name = i.name;
       tr.append(cell(i.name), cell(i.net, "net"), cell(String(i.width), "num"),
-        cell("", "mono hex"), cell("", "mono num dec"), cell("", "mono bits"));
+        cell("", "mono num hex"), cell("", "mono num dec"), cell("", "mono num bits"));
       ib.append(tr);
     }
     for (const o of info.drive) {
