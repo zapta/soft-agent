@@ -173,9 +173,29 @@
               "type": "null"
             }
           ]
+        },
+        "format": {
+          "description": "How hosts such as the debug panel show its value at first: hex, dec\nor bin. Omitted means bin for one bit and hex for more.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValueFormat"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
+    },
+    "ValueFormat": {
+      "description": "How a watched value is shown.",
+      "type": "string",
+      "enum": [
+        "hex",
+        "dec",
+        "bin"
+      ]
     }
   },
   "$id": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json"

@@ -143,6 +143,9 @@ pub struct MapWatch {
     pub width: usize,
     /// Its first bit in the read space.
     pub offset: usize,
+    /// The debug file's format for showing it (hex, dec or bin), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

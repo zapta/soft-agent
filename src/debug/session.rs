@@ -259,6 +259,9 @@ pub struct NetInfo {
     pub width: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    /// For watched nets: the debug file's format for showing it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
 }
 
 static NEXT: AtomicU32 = AtomicU32::new(1);
@@ -340,6 +343,7 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
                 net: i.net.clone(),
                 width: i.width,
                 mode: None,
+                format: i.format.clone(),
             })
             .collect(),
         drive: s
@@ -351,6 +355,7 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
                 net: o.net.clone(),
                 width: o.width,
                 mode: Some(o.mode.clone()),
+                format: None,
             })
             .collect(),
     };
@@ -762,6 +767,7 @@ pub fn info(id: &str) -> Result<SessionInfo, ToolError> {
                     net: i.net.clone(),
                     width: i.width,
                     mode: None,
+                    format: i.format.clone(),
                 })
                 .collect(),
             drive: s

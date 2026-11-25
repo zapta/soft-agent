@@ -132,6 +132,7 @@ mode = "override"
 [[watch]]
 name = "counter"
 bus = "main.count"
+format = "dec"
 
 [[watch]]
 name = "blink"
@@ -184,6 +185,10 @@ bus = "main.u_ctrl.state"
   `input` in earlier drafts, which read backwards from the design's side.
   `name` is the host's name for each (defaults to the net's path); widths
   come from the design, not the file.
+- `format` of a watch entry: how hosts show its value at first, `hex`,
+  `dec` or `bin`. Omitted means `bin` for one bit and `hex` for more. In
+  the panel, each row's Format menu changes it; a choice made there is
+  remembered by name in that browser and wins over the file's.
 - `mode` of a drive entry: `override` (the debugger can take over a net the
   design drives, and releases it back to the design) or `register` (a net
   with no driver in the design, driven only by the debugger). See the next
@@ -371,7 +376,7 @@ debug map. All are soft-agent extension tools in the engine's style
 | `debug_read` | Reads named nets, in one snapshot | Values as numbers and as bit strings, with widths |
 | `debug_write` | Writes a named net, or releases an override back to the design | Refuses names that aren't in drive |
 | `debug_close` | Ends the session | |
-| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused; each driven net has value and release controls (0 and 1 buttons for one bit) |
+| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused; each watched row shows its value in a format chosen per row (hex, decimal or binary); each driven net has value and release controls (0 and 1 buttons for one bit) |
 
 - **The port is shared.** The debugger owns the UART while a session is open,
   so the engine's `open_serial` on the same port is refused in version 1. A

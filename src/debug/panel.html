@@ -53,7 +53,6 @@
     background: var(--panel); color: var(--text); font: 12px var(--mono);
     box-shadow: 0 2px 8px rgb(0 0 0 / .15); white-space: nowrap;
   }
-  .bits { letter-spacing: .06em; }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
   .pill.on { color: var(--on); border-color: var(--on); }
   .pill.off { color: var(--off); }
@@ -77,6 +76,7 @@
   }
   .empty { padding: 12px 14px; color: var(--muted); }
   select { font: inherit; }
+  select.fmt { font-size: 13px; padding: 1px 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
 </style>
 </head>
 <body>
@@ -113,7 +113,7 @@
     <h2>Watch <span id="status"></span></h2>
     <div class="card">
       <div class="scroll"><table id="watch">
-        <thead><tr><th>Name</th><th class="num">Bits</th><th class="num">Hex</th><th class="num">Decimal</th><th class="num">Binary</th></tr></thead>
+        <thead><tr><th>Name</th><th class="num">Bits</th><th>Format</th><th class="num">Value</th></tr></thead>
         <tbody></tbody>
       </table></div>
       <div class="empty" id="no-watch" hidden>This build watches no nets.</div>
@@ -162,13 +162,37 @@
     return td;
   }
 
-  // A decimal cell as wide as the net's largest value, so the column keeps
-  // its width as the value changes (values over 53 bits show as "–").
-  function decCell(width) {
-    const td = cell("", "mono num dec");
-    const digits = width <= 53 ? Math.ceil(width * Math.log10(2)) : 1;
-    td.style.width = `calc(${Math.max(digits, 1)}ch + 30px)`;
-    return td;
+  // Each watched row's format: the one chosen in its menu (remembered by
+  // name in this browser), else the debug file's, else binary for one bit
+  // and hex for more.
+  const FORMATS = [["hex", "Hex"], ["dec", "Decimal"], ["bin", "Binary"]];
+  const FORMATS_KEY = "logix-debug-panel.formats";
+  let formats = {};
+  try { formats = JSON.parse(localStorage.getItem(FORMATS_KEY) || "{}") || {}; } catch { formats = {}; }
+  function formatOf(name, width, fileFormat) {
+    return formats[name] || fileFormat || (width === 1 ? "bin" : "hex");
+  }
+  function saveFormat(name, fmt) {
+    formats[name] = fmt;
+    try { localStorage.setItem(FORMATS_KEY, JSON.stringify(formats)); } catch { /* kept for this page only */ }
+  }
+
+  // A value, from its bits (most significant first), in a format.
+  function shown(bits, fmt) {
+    if (!bits) return "";
+    if (fmt === "bin") return bits;
+    const n = BigInt("0b" + bits);
+    if (fmt === "dec") return n.toString();
+    return "0x" + n.toString(16).padStart(Math.ceil(bits.length / 4), "0");
+  }
+
+  // The value cell is as wide as the format's longest value for the net,
+  // so the column keeps its width as the value changes.
+  function sizeValue(td, width, fmt) {
+    const chars = fmt === "bin" ? width
+      : fmt === "dec" ? Math.max(1, Math.ceil(width * Math.log10(2)))
+      : 2 + Math.ceil(width / 4);
+    td.style.width = `calc(${chars}ch + 30px)`;
   }
 
   // The net's path, at once, next to the pointer (the browser's own title
@@ -195,8 +219,26 @@
     for (const i of info.watch) {
       const tr = document.createElement("tr");
       tr.dataset.name = i.name;
-      tr.append(nameCell(i.name, i.net), cell(String(i.width), "num"),
-        cell("", "mono num hex"), decCell(i.width), cell("", "mono num bits"));
+      const value = cell("", "mono num value");
+      const fmtCell = document.createElement("td");
+      const sel = document.createElement("select");
+      sel.className = "fmt";
+      sel.title = `Format of ${i.name}`;
+      for (const [v, label] of FORMATS) {
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = label;
+        sel.append(o);
+      }
+      sel.value = formatOf(i.name, i.width, i.format);
+      sizeValue(value, i.width, sel.value);
+      sel.onchange = () => {
+        saveFormat(i.name, sel.value);
+        sizeValue(value, i.width, sel.value);
+        value.textContent = shown(tr.dataset.bits, sel.value);
+      };
+      fmtCell.append(sel);
+      tr.append(nameCell(i.name, i.net), cell(String(i.width), "num"), fmtCell, value);
       ib.append(tr);
     }
     for (const o of info.drive) {
@@ -258,9 +300,8 @@
     for (const v of state.values) {
       const tr = $("watch").querySelector(`tr[data-name="${CSS.escape(v.name)}"]`);
       if (!tr) continue;
-      setText(tr.querySelector(".hex"), v.hex);
-      setText(tr.querySelector(".dec"), v.value === undefined || v.value === null ? "–" : String(v.value));
-      setText(tr.querySelector(".bits"), v.bits);
+      tr.dataset.bits = v.bits;
+      setText(tr.querySelector(".value"), shown(v.bits, tr.querySelector(".fmt").value));
     }
     for (const o of info.drive) {
       const tr = $("drive").querySelector(`tr[data-name="${CSS.escape(o.name)}"]`);

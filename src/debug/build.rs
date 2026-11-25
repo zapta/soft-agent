@@ -834,6 +834,7 @@ fn layout(
             members,
             width,
             offset,
+            format: i.format.map(|f| f.as_str().to_string()),
         });
         offset += width;
     }

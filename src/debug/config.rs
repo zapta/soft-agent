@@ -88,6 +88,10 @@ pub struct WatchNet {
     /// Give net or bus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus: Option<Bus>,
+    /// How hosts such as the debug panel show its value at first: hex, dec
+    /// or bin. Omitted means bin for one bit and hex for more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<ValueFormat>,
     /// The paths it reads, most significant first: the net, or the list's
     /// members. Set by parse.
     #[serde(skip)]
@@ -114,6 +118,25 @@ impl DriveNet {
 
     pub fn is_list(&self) -> bool {
         matches!(self.bus, Some(Bus::List(_)))
+    }
+}
+
+/// How a watched value is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ValueFormat {
+    Hex,
+    Dec,
+    Bin,
+}
+
+impl ValueFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ValueFormat::Hex => "hex",
+            ValueFormat::Dec => "dec",
+            ValueFormat::Bin => "bin",
+        }
     }
 }
 
@@ -360,6 +383,7 @@ mode = "override"
 [[watch]]
 bus = "main.count"
 name = "counter"
+format = "dec"
 
 [[watch]]
 net = "main.gen_lane[2].u_lane.err"
@@ -373,6 +397,9 @@ name = "two_pins"
         assert_eq!(c.watch.len(), 3);
         assert_eq!(c.watch[2].parts, vec!["pin.21", "pin.20"]);
         assert_eq!(c.drive[0].mode, DriveMode::Override);
+        assert_eq!(c.watch[0].format, Some(ValueFormat::Dec));
+        assert_eq!(c.watch[1].format, None);
+        assert!(parse_json(r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"main.a","format":"octal"}]}"#).is_err());
     }
 
     #[test]
