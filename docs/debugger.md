@@ -209,6 +209,14 @@ Writes, by mode:
 - Each instance is its own net: a module instantiated twice gives
   `main.u_lane0.err` and `main.u_lane1.err`, and the file lists each one it wants.
 - Generate blocks are written as yosys names them: `main.gen_lane[2].u_lane.err`.
+- A package pin is `pin.<pin>`, such as `pin.18`: the build reads the
+  top-level port bit the constraint file places on that pin (`set_io s1_n
+  18`, or a bus bit such as `sw[0]`). Pins are one bit, so they use `net`,
+  and version 1 reads them but doesn't drive them. A pin the constraint file
+  doesn't use is an error, and a top module named `pin` is refused, since
+  its paths would be ambiguous. A pin wired to a dedicated pad, such as the
+  iCE40 UltraPlus's RGB LED driver pins, can't reach the fabric and so can't
+  be read.
 - Whole nets and buses only: no bit selects (`bus[7:4]`) and no wildcards in version 1.
 - A name that matches no net, or more than one, is a build error (R9).
 
@@ -402,7 +410,7 @@ move unchanged; only where the code lives changes. To keep that easy:
 | Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later |
 | Q8 | Several debug files per project, merged? | One file per build request |
 | Q9 | Where the schema lives? | In this repo, under `schemas/` |
-| Q10 | Naming rules? | Full instance paths starting with the top module (`main.u_ctrl.state`), whole nets, generate names as yosys prints them, no wildcards (see Naming rules) |
+| Q10 | Naming rules? | Full instance paths starting with the top module (`main.u_ctrl.state`), or `pin.<pin>` for package pins, whole nets, generate names as yosys prints them, no wildcards (see Naming rules) |
 
 ## First milestone
 

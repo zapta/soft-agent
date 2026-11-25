@@ -185,8 +185,16 @@ pub async fn run(
         .map_err(|e| ToolError::engine(format!("Can't create {}: {e}", gen_dir.display())))?;
 
     // 1. The pre-pass.
-    let nets = unique_nets(&config);
-    let design = prepass(&input, &nets, &src, &gen_dir, &bin, call).await?;
+    let pin_ports = pin_ports(&config, &pins, &input.constraint_file)?;
+    let nets: Vec<_> = unique_nets(&config)
+        .into_iter()
+        .filter(|(n, _)| !pin_ports.contains_key(n))
+        .collect();
+    let mut design = prepass(&input, &nets, &src, &gen_dir, &bin, call).await?;
+    for pin in pin_ports.keys() {
+        design.widths.insert(pin.clone(), 1);
+    }
+    design.pin_ports = pin_ports;
 
     // 2. The layout, the build ID and the generated files.
     let mut map = layout(&input, &config, &design, &link)?;
@@ -202,7 +210,9 @@ pub async fn run(
     write(&gen_dir.join("debug_top.v"), &top_v)?;
     // The map names nets as the debug file does, from the top module.
     for i in &mut map.inputs {
-        i.net = format!("{}.{}", input.top_module, i.net);
+        if !i.net.starts_with(PIN_PREFIX) {
+            i.net = format!("{}.{}", input.top_module, i.net);
+        }
     }
     for o in &mut map.outputs {
         o.net = format!("{}.{}", input.top_module, o.net);
@@ -268,11 +278,67 @@ pub async fn run(
     })
 }
 
+/// What a path to a package pin starts with: pin.18 is the pin the
+/// constraint file puts at 18.
+const PIN_PREFIX: &str = "pin.";
+
+/// For each pin.<pin> input, the top-level port bit the constraint file
+/// puts on that pin, as a Verilog expression such as sw[0].
+fn pin_ports(
+    config: &DebugConfig,
+    pins: &BTreeMap<String, String>,
+    pcf_name: &str,
+) -> Result<BTreeMap<String, String>, ToolError> {
+    let mut out = BTreeMap::new();
+    for i in &config.input {
+        let Some(pin) = i.net.strip_prefix(PIN_PREFIX) else {
+            continue;
+        };
+        let port = pins
+            .iter()
+            .find(|(_, p)| p.as_str() == pin)
+            .map(|(port, _)| port.clone())
+            .ok_or_else(|| {
+                ToolError::new(
+                    Category::Design,
+                    format!(
+                        "{}: {pcf_name} puts no port on pin {pin}. A pin path reads the port the constraint file places there.",
+                        i.net
+                    ),
+                )
+            })?;
+        let expr = match port.split_once('[') {
+            Some((base, bit)) => format!("{}[{bit}", vid(base)),
+            None => vid(&port),
+        };
+        out.insert(i.net.clone(), expr);
+    }
+    Ok(out)
+}
+
 /// The debug file's nets without the top module's name, which every path
 /// starts with (main.u_ctrl.state), as the pre-pass names them
 /// (u_ctrl.state). Host names default to the whole path.
 fn in_top(mut config: DebugConfig, top: &str) -> Result<DebugConfig, String> {
+    if top == "pin" {
+        return Err(
+            "The top module is called pin, which debug paths use for package pins (pin.18): rename the top module to debug it."
+                .into(),
+        );
+    }
+    for o in &config.output {
+        if o.net.starts_with(PIN_PREFIX) {
+            return Err(format!(
+                "{}: version 1 reads pins but can't drive them. Drive an internal net instead.",
+                o.net
+            ));
+        }
+    }
     let strip = |net: &mut String, name: &mut Option<String>| -> Result<(), String> {
+        if net.starts_with(PIN_PREFIX) {
+            name.get_or_insert_with(|| net.clone());
+            return Ok(());
+        }
         let rest = net
             .strip_prefix(top)
             .and_then(|r| r.strip_prefix('.'))
@@ -487,6 +553,8 @@ struct Design {
     ports: Vec<Port>,
     /// Widths of the nets the file names.
     widths: BTreeMap<String, usize>,
+    /// The pin.<pin> inputs' port bits (pin_ports).
+    pin_ports: BTreeMap<String, String>,
 }
 
 /// A yosys select pattern for a net. Brackets are wildcards in patterns, so
@@ -618,7 +686,11 @@ async fn prepass(
             }
         }
     }
-    Ok(Design { ports, widths })
+    Ok(Design {
+        ports,
+        widths,
+        pin_ports: BTreeMap::new(),
+    })
 }
 
 /// The pre-pass's failure, in the user's terms.
@@ -681,7 +753,15 @@ fn layout(
         match wrong {
             Some(why) => Err(ToolError::new(
                 Category::Design,
-                format!("{}: {}.{net} {why}.", input.debug_file, input.top_module),
+                format!(
+                    "{}: {} {why}.",
+                    input.debug_file,
+                    if net.starts_with(PIN_PREFIX) {
+                        net.to_string()
+                    } else {
+                        format!("{}.{net}", input.top_module)
+                    }
+                ),
             )),
             None => Ok(()),
         }
@@ -782,12 +862,19 @@ fn debug_top(user_top: &str, design: &Design, map: &DebugMap, link: &Link, id: u
         .map(|i| &i.net)
         .chain(map.outputs.iter().map(|o| &o.net))
     {
-        if !own(net) && !wire_of.contains_key(net) {
+        if !own(net) && !design.pin_ports.contains_key(net) && !wire_of.contains_key(net) {
             wire_of.insert(net.clone(), format!("logix_dbg_net{}", wires.len()));
             wires.push((net.clone(), design.widths[net]));
         }
     }
-    let signal = |net: &str| wire_of.get(net).cloned().unwrap_or_else(|| vid(net));
+    let signal = |net: &str| {
+        design
+            .pin_ports
+            .get(net)
+            .or(wire_of.get(net))
+            .cloned()
+            .unwrap_or_else(|| vid(net))
+    };
 
     let mut v = String::new();
     let _ = writeln!(
@@ -995,6 +1082,23 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn pins_read_the_port_placed_there() {
+        let c = config::parse(
+            r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"pin.18"},{"net":"pin.19"}]}"#,
+        )
+        .unwrap();
+        let c = in_top(c, "main").unwrap();
+        assert_eq!(c.input[0].net, "pin.18");
+        let pins = pcf_pins("set_io sw[0] 18\nset_io key 19\n");
+        let p = pin_ports(&c, &pins, "p.pcf").unwrap();
+        assert_eq!(p["pin.18"], "sw[0]");
+        assert_eq!(p["pin.19"], "key");
+        let none = pcf_pins("set_io key 20\n");
+        assert!(pin_ports(&c, &none, "p.pcf").is_err());
+        assert!(in_top(c.clone(), "pin").is_err());
     }
 
     #[test]
