@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Logix debug configuration, version 1",
+  "description": "A debug configuration file: which nets the debugger reads and drives, how\nit reaches the host and which clock it runs on.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "This schema's address, for editors. Optional; any other value is\nrefused.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "clock": {
+      "description": "The clock the debugger and its UART run on: a top-level input port of\nthe design, such as sys_clk. Every input and output net must be on\nit.",
+      "type": "string"
+    },
+    "clock_mhz": {
+      "description": "The clock's frequency in MHz. Needed only when the clock port isn't\non the board's clock pin, whose frequency the catalog gives.",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "uplink": {
+      "description": "How the debugger reaches the host. Omitted means the board's UART at\n115200 baud.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Uplink"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "input": {
+      "description": "Nets the debugger reads.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/InputNet"
+      },
+      "default": []
+    },
+    "output": {
+      "description": "Nets the debugger drives.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/OutputNet"
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "clock"
+  ],
+  "$defs": {
+    "Uplink": {
+      "description": "The link to the host.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "The kind of link; only uart in version 1.",
+          "$ref": "#/$defs/UplinkKind"
+        },
+        "tx": {
+          "description": "The FPGA pin the debugger transmits on. Defaults to the board's UART\nTX pin in the catalog.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rx": {
+          "description": "The FPGA pin the debugger receives on. Defaults to the board's UART\nRX pin in the catalog.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "baud": {
+          "description": "Bits per second. Defaults to 115200.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ]
+    },
+    "UplinkKind": {
+      "type": "string",
+      "enum": [
+        "uart"
+      ]
+    },
+    "InputNet": {
+      "description": "A net the debugger reads.",
+      "type": "object",
+      "properties": {
+        "net": {
+          "description": "The net: its instance path and name before flattening, such as\nu_ctrl.state, or just its name in the top module, such as count.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The host's name for it. Defaults to the net.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "net"
+      ]
+    },
+    "OutputNet": {
+      "description": "A net the debugger drives.",
+      "type": "object",
+      "properties": {
+        "net": {
+          "description": "The net, named as for inputs.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The host's name for it. Defaults to the net.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "description": "override: the debugger can take over a net the design drives, and\nrelease it back. register: the debugger always drives it. Defaults\nto override.",
+          "$ref": "#/$defs/OutputMode",
+          "default": "override"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "net"
+      ]
+    },
+    "OutputMode": {
+      "type": "string",
+      "enum": [
+        "override",
+        "register"
+      ]
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json"
+}

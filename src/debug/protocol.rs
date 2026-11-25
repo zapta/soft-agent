@@ -1,0 +1,213 @@
+//! The debugger's protocol, version 1 (docs/debugger.md, Protocol), and the
+//! debug map the build writes for it.
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+pub const PROTOCOL_VERSION: u8 = 1;
+pub const SYNC_HOST: u8 = 0xA5;
+pub const SYNC_REPLY: u8 = 0x5A;
+
+pub const INFO: u8 = 0x01;
+pub const SNAPSHOT: u8 = 0x02;
+pub const READ: u8 = 0x03;
+pub const WRITE: u8 = 0x04;
+pub const OVERRIDE: u8 = 0x05;
+
+/// Bytes of data one WRITE or OVERRIDE carries (the debugger keeps 8
+/// payload bytes, 2 of them the offset).
+pub const MAX_WRITE: usize = 6;
+/// Bytes one READ returns at most.
+pub const MAX_READ: usize = 128;
+
+/// CRC-8, polynomial 07, initial 00 (CRC-8/SMBUS), as the debugger has it.
+pub fn crc8(data: &[u8]) -> u8 {
+    let mut c = 0u8;
+    for &d in data {
+        c ^= d;
+        for _ in 0..8 {
+            c = if c & 0x80 != 0 {
+                (c << 1) ^ 0x07
+            } else {
+                c << 1
+            };
+        }
+    }
+    c
+}
+
+/// A host frame: sync, command, length, payload, CRC.
+pub fn frame(command: u8, payload: &[u8]) -> Vec<u8> {
+    assert!(payload.len() <= 255);
+    let mut f = vec![SYNC_HOST, command, payload.len() as u8];
+    f.extend_from_slice(payload);
+    let crc = crc8(&f[1..]);
+    f.push(crc);
+    f
+}
+
+/// What a reply's status byte means.
+pub fn status_text(status: u8) -> &'static str {
+    match status {
+        0 => "OK",
+        1 => "the debugger got a bad CRC",
+        2 => "the debugger doesn't know the command",
+        3 => "the debugger refused the length or range",
+        _ => "an unknown status",
+    }
+}
+
+/// A reply's fields, once its CRC checked out.
+#[derive(Debug, PartialEq)]
+pub struct Reply {
+    pub command: u8,
+    pub status: u8,
+    pub payload: Vec<u8>,
+}
+
+/// Finds a whole reply in `buf` (bytes before its sync byte are skipped).
+/// Ok(None) means more bytes are needed.
+pub fn parse_reply(buf: &[u8]) -> Result<Option<(Reply, usize)>, String> {
+    let Some(start) = buf.iter().position(|&b| b == SYNC_REPLY) else {
+        return Ok(None);
+    };
+    let b = &buf[start..];
+    if b.len() < 5 {
+        return Ok(None);
+    }
+    let len = b[3] as usize;
+    let total = 5 + len;
+    if b.len() < total {
+        return Ok(None);
+    }
+    if crc8(&b[1..total - 1]) != b[total - 1] {
+        return Err("The reply's CRC is wrong: the link dropped or changed bytes.".into());
+    }
+    Ok(Some((
+        Reply {
+            command: b[1],
+            status: b[2],
+            payload: b[4..4 + len].to_vec(),
+        },
+        start + total,
+    )))
+}
+
+/// The debug map, debug_map.json in the build folder: what the debugger in
+/// that build reads and drives, and where (docs/debugger.md, R7).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DebugMap {
+    /// The map's format, logix-debug-map-v1.
+    pub format: String,
+    /// The protocol version the debugger speaks.
+    pub protocol: u8,
+    /// The build ID, 8 hex digits, which the debugger reports too.
+    pub build_id: String,
+    /// The board's ID.
+    pub board: String,
+    /// The design's top module (the debug build's top wraps it).
+    pub top_module: String,
+    /// The debugger's clock port and its frequency in MHz.
+    pub clock: String,
+    pub clock_mhz: f64,
+    /// The UART's speed and FPGA pins.
+    pub baud: u32,
+    pub tx_pin: String,
+    pub rx_pin: String,
+    /// Bytes of the read space, the write space and the override enables.
+    pub read_bytes: usize,
+    pub write_bytes: usize,
+    pub enable_bytes: usize,
+    /// The nets the debugger reads, in read-space order.
+    pub inputs: Vec<MapInput>,
+    /// The nets the debugger drives, in write-space order.
+    pub outputs: Vec<MapOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MapInput {
+    /// The host's name for it.
+    pub name: String,
+    /// The net in the design.
+    pub net: String,
+    /// Its width in bits.
+    pub width: usize,
+    /// Its first bit in the read space.
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MapOutput {
+    pub name: String,
+    pub net: String,
+    pub width: usize,
+    /// Its first bit in the write space.
+    pub offset: usize,
+    /// override or register.
+    pub mode: String,
+    /// Its bit in the override enables; none for register mode, which is
+    /// always on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_bit: Option<usize>,
+}
+
+pub const MAP_FORMAT: &str = "logix-debug-map-v1";
+pub const MAP_FILE: &str = "debug_map.json";
+
+/// Bits `offset..offset+width` of a little-endian byte string.
+pub fn get_bits(bytes: &[u8], offset: usize, width: usize) -> Vec<bool> {
+    (offset..offset + width)
+        .map(|i| bytes.get(i / 8).is_some_and(|b| b >> (i % 8) & 1 == 1))
+        .collect()
+}
+
+/// Sets bits `offset..` of a little-endian byte string to `bits`.
+pub fn set_bits(bytes: &mut [u8], offset: usize, bits: &[bool]) {
+    for (k, &v) in bits.iter().enumerate() {
+        let i = offset + k;
+        if v {
+            bytes[i / 8] |= 1 << (i % 8);
+        } else {
+            bytes[i / 8] &= !(1 << (i % 8));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crc_is_crc8_smbus() {
+        // The standard check value of CRC-8/SMBUS.
+        assert_eq!(crc8(b"123456789"), 0xF4);
+    }
+
+    #[test]
+    fn replies_round_trip() {
+        let mut r = vec![0x00, SYNC_REPLY, READ, 0, 2, 0xDE, 0xBC];
+        r.push(crc8(&r[2..]));
+        let (reply, used) = parse_reply(&r).unwrap().unwrap();
+        assert_eq!(used, r.len());
+        assert_eq!(reply.payload, vec![0xDE, 0xBC]);
+        assert!(parse_reply(&r[..r.len() - 1]).unwrap().is_none());
+        let last = r.len() - 1;
+        r[last] ^= 1;
+        assert!(parse_reply(&r).is_err());
+    }
+
+    #[test]
+    fn bits_pack_little_endian() {
+        let mut b = vec![0u8; 3];
+        set_bits(
+            &mut b,
+            4,
+            &[true, false, true, true, true, true, true, true, true],
+        );
+        assert_eq!(b, vec![0xD0, 0x1F, 0x00]);
+        assert_eq!(get_bits(&b, 4, 3), vec![true, false, true]);
+    }
+}

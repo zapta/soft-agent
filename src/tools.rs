@@ -8,13 +8,26 @@ use rmcp::model::{CallToolResult, JsonObject, Tool};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use logix_engine::progress::NoProgress;
 use logix_engine::state::{self, EngineState};
-use logix_engine::tools::{EngineTool, definition, parse_input, to_call_result};
+use logix_engine::tools::{Call, EngineTool, definition, parse_input, to_call_result};
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+
+use crate::debug::build::DebugBuild;
+use crate::debug::session::{self, DebugClose, DebugOpen, DebugRead, DebugWrite};
 
 /// The extension tools, in the order `tools/list` returns them (after the
 /// engine's).
 pub fn all_definitions() -> Vec<Tool> {
-    vec![definition::<GetSoftAgentInfo>()]
+    vec![
+        definition::<GetSoftAgentInfo>(),
+        definition::<DebugBuild>(),
+        definition::<DebugOpen>(),
+        definition::<DebugRead>(),
+        definition::<DebugWrite>(),
+        definition::<DebugClose>(),
+    ]
 }
 
 /// Runs an extension tool by name. Returns None when the name isn't one,
@@ -29,6 +42,30 @@ pub async fn call(
         GetSoftAgentInfo::NAME => to_call_result(
             &display,
             parse_input::<GetSoftAgentInfo>(arguments).map(|_| get_soft_agent_info(state)),
+        ),
+        DebugBuild::NAME => {
+            let call = Call::new(Arc::new(NoProgress), CancellationToken::new());
+            let result = match parse_input::<DebugBuild>(arguments) {
+                Ok(input) => crate::debug::build::run(state, input, &call).await,
+                Err(e) => Err(e),
+            };
+            to_call_result(&display, result)
+        }
+        DebugOpen::NAME => to_call_result(
+            &display,
+            parse_input::<DebugOpen>(arguments).and_then(session::open),
+        ),
+        DebugRead::NAME => to_call_result(
+            &display,
+            parse_input::<DebugRead>(arguments).and_then(session::read),
+        ),
+        DebugWrite::NAME => to_call_result(
+            &display,
+            parse_input::<DebugWrite>(arguments).and_then(session::write),
+        ),
+        DebugClose::NAME => to_call_result(
+            &display,
+            parse_input::<DebugClose>(arguments).and_then(session::close),
         ),
         _ => return None,
     })

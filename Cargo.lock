@@ -1049,7 +1049,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "logix-engine"
 version = "0.0.0"
-source = "git+https://github.com/openlogix/logix-engine?rev=566ffa87d48ca210d251150a068b1d5f93e23a5c#566ffa87d48ca210d251150a068b1d5f93e23a5c"
+source = "git+https://github.com/openlogix/logix-engine?branch=main#58ae4ed0d3c052f51a657204e55bebe02f5ae555"
 dependencies = [
  "clap",
  "dunce",
@@ -1849,13 +1849,18 @@ name = "soft-agent"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "hex",
  "log",
  "logix-engine",
+ "regex",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
+ "serialport",
+ "sha2",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

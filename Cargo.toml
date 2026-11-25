@@ -8,9 +8,10 @@ publish = false
 
 [dependencies]
 # Logix Engine, used as a library: its tools, state, packages and catalog.
-# Pinned to a commit; bump `rev` to pick up newer engine changes. To build
+# Follows the engine's main branch; Cargo.lock records the commit used, and
+# `cargo update -p logix-engine` moves it to the newest. To build
 # against a local clone instead, see README.md, Engine version.
-logix-engine = { git = "https://github.com/openlogix/logix-engine", rev = "566ffa87d48ca210d251150a068b1d5f93e23a5c" }
+logix-engine = { git = "https://github.com/openlogix/logix-engine", branch = "main" }
 # The same major versions as the engine, so the types we share with it
 # (rmcp's model, schemars' schemas) are the same types.
 clap = { version = "4", features = ["derive"] }
@@ -20,6 +21,12 @@ schemars = { version = "1", features = ["indexmap2"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+# For the debugger tools (src/debug), the engine's versions too.
+hex = "0.4"
+regex = "1"
+serialport = { version = "4.10", default-features = false }
+sha2 = "0.11"
+tokio-util = "0.7"
 
 [profile.release]
 strip = true

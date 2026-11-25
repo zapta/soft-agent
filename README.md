@@ -4,15 +4,21 @@ Experimental extensions to [Logix Engine](https://github.com/openlogix/logix-eng
 soft-agent is an MCP server that has all of the engine's tools, plus tools of
 its own. Ideas that work out may later move into the engine itself.
 
-It uses the engine as a Rust library (the `logix-engine` crate, pinned to a
-commit in `Cargo.toml`), not as a separate process:
+It uses the engine as a Rust library (the `logix-engine` crate, following the
+engine's `main` branch, at the commit `Cargo.lock` records), not as a
+separate process:
 
 - Engine tools are passed to the engine's own MCP server code unchanged, so
   they behave exactly as in `logix-engine`.
 - Extension tools live in [src/tools.rs](src/tools.rs) and are listed after
   the engine's. They use the engine's `EngineTool` trait, so their schemas,
-  input checks and errors look the same. For now there is one,
-  `get_soft_agent_info`.
+  input checks and errors look the same:
+  - `get_soft_agent_info`: the extension's and the engine's versions.
+  - The in-design debugger, [docs/debugger.md](docs/debugger.md):
+    `debug_build` builds a design with a debugger in it, and `debug_open`,
+    `debug_read`, `debug_write` and `debug_close` read and drive the
+    design's nets on the board over its UART. The debug file's schema is
+    [schemas/logix-debug-v1.json](schemas/logix-debug-v1.json).
 - The command line is the engine's (`--engine-folder`, `--log-level`, ...,
   see the engine's `docs/command-line.md`).
 
@@ -48,10 +54,11 @@ claude mcp add --scope user soft-agent -- "$PWD/scripts/serve.sh"
 
 ## Engine version
 
-`Cargo.toml` pins `logix-engine` to a commit (`rev`). To move to a newer
-engine:
+`Cargo.toml` follows the engine's `main` branch; `Cargo.lock` records the
+commit a build uses, so builds stay repeatable until it is moved. To move to
+the newest engine:
 
-1. Change `rev`, then `cargo update -p logix-engine` and build.
+1. `cargo update -p logix-engine`, then build.
 2. Compare the engine's `src/main.rs` with ours: our startup copies it,
    since it's in the engine's binary, not its library.
 3. Keep `rust-toolchain.toml` at the engine's Rust version.

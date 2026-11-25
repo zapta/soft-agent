@@ -6,6 +6,11 @@
 //! engine's binary, not its library. Keep it in step when bumping the
 //! engine (README.md, Engine version).
 
+// As in the engine: tool errors are ToolError data, which is large on
+// purpose.
+#![allow(clippy::result_large_err)]
+
+mod debug;
 mod server;
 mod tools;
 
