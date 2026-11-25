@@ -47,8 +47,6 @@
   td.num { text-align: right; }
   .net { color: var(--muted); font-family: var(--mono); font-size: 12px; }
   .bits { letter-spacing: .06em; }
-  .changed { animation: flash .6s ease-out; }
-  @keyframes flash { from { background: color-mix(in srgb, var(--accent) 25%, transparent); } to { background: transparent; } }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
   .pill.on { color: var(--on); border-color: var(--on); }
   .pill.off { color: var(--off); }
@@ -197,11 +195,7 @@
   }
 
   function setText(td, text) {
-    if (td.textContent !== text) {
-      const first = td.textContent === "";
-      td.textContent = text;
-      if (!first) { td.classList.remove("changed"); void td.offsetWidth; td.classList.add("changed"); }
-    }
+    if (td.textContent !== text) td.textContent = text;
   }
 
   function render(state) {
