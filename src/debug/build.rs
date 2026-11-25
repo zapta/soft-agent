@@ -144,7 +144,9 @@ pub async fn run(
     let out = engine_build::check_build_folder(&input.build_folder, &src)?;
 
     let config_text = read(&src.join(&input.debug_file), "the debug file")?;
-    let config = config::parse(&config_text).map_err(|e| file_error(&input.debug_file, &e))?;
+    let config = config::parse(&config_text)
+        .and_then(|c| in_top(c, &input.top_module))
+        .map_err(|e| file_error(&input.debug_file, &e))?;
 
     state.ensure_catalog(call).await?;
     let custom = logix_engine::custom_boards::load(input.custom_boards_folder.as_deref())?;
@@ -198,6 +200,13 @@ pub async fn run(
 
     let top_v = debug_top(&input.top_module, &design, &map, &link, id);
     write(&gen_dir.join("debug_top.v"), &top_v)?;
+    // The map names nets as the debug file does, from the top module.
+    for i in &mut map.inputs {
+        i.net = format!("{}.{}", input.top_module, i.net);
+    }
+    for o in &mut map.outputs {
+        o.net = format!("{}.{}", input.top_module, o.net);
+    }
     write(&gen_dir.join("logix_debugger.v"), DEBUGGER_V)?;
     let pcf = format!(
         "{}\n# Added by debug_build: the debugger's UART.\nset_io {TX_PORT} {}\nset_io {RX_PORT} {}\n",
@@ -257,6 +266,34 @@ pub async fn run(
         outputs: map.outputs,
         debugger,
     })
+}
+
+/// The debug file's nets without the top module's name, which every path
+/// starts with (main.u_ctrl.state), as the pre-pass names them
+/// (u_ctrl.state). Host names default to the whole path.
+fn in_top(mut config: DebugConfig, top: &str) -> Result<DebugConfig, String> {
+    let strip = |net: &mut String, name: &mut Option<String>| -> Result<(), String> {
+        let rest = net
+            .strip_prefix(top)
+            .and_then(|r| r.strip_prefix('.'))
+            .filter(|r| !r.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "The net {net:?} must start with the top module's name, {top}: write {top}.{net}."
+                )
+            })?;
+        let rest = rest.to_string();
+        name.get_or_insert_with(|| net.clone());
+        *net = rest;
+        Ok(())
+    };
+    for i in &mut config.input {
+        strip(&mut i.net, &mut i.name)?;
+    }
+    for o in &mut config.output {
+        strip(&mut o.net, &mut o.name)?;
+    }
+    Ok(config)
 }
 
 // --- The uplink -------------------------------------------------------------
@@ -519,7 +556,8 @@ async fn prepass(
             return Err(ToolError::new(
                 Category::Design,
                 format!(
-                    "The debug file drives {net}, a port of the top module: version 1 can drive internal nets only."
+                    "The debug file drives {}.{net}, a port of the top module: version 1 can drive internal nets only.",
+                    input.top_module
                 ),
             ));
         }
@@ -533,7 +571,8 @@ async fn prepass(
                 return Err(ToolError::new(
                     Category::Design,
                     format!(
-                        "The pre-pass couldn't expose {net}. It may have no driver or be a constant: debug another net."
+                        "The pre-pass couldn't expose {}.{net}. It may have no driver or be a constant: debug another net.",
+                        input.top_module
                     ),
                 ));
             }
@@ -565,8 +604,8 @@ fn prepass_error(
         return ToolError::new(
             Category::Design,
             format!(
-                "{}: the net {net} {what}. Name a whole net by its instance path from the top module, such as u_ctrl.state.",
-                input.debug_file
+                "{}: the net {}.{net} {what}. Name a whole net by its instance path, starting with the top module, such as {}.u_ctrl.state.",
+                input.debug_file, input.top_module, input.top_module
             ),
         )
         .with_details(output);
@@ -879,6 +918,26 @@ mod tests {
         let p = pcf_pins("# x\nset_io sys_clk 35\nset_io -nowarn led[0] 40 # c\n");
         assert_eq!(p["sys_clk"], "35");
         assert_eq!(p["led[0]"], "40");
+    }
+
+    #[test]
+    fn paths_start_with_the_top() {
+        let c = config::parse(
+            r#"{"clock":"c","input":[{"net":"main.u.count"},{"net":"main.blink","name":"b"}]}"#,
+        )
+        .unwrap();
+        let c = in_top(c, "main").unwrap();
+        assert_eq!(c.input[0].net, "u.count");
+        assert_eq!(c.input[0].name.as_deref(), Some("main.u.count"));
+        assert_eq!(c.input[1].name.as_deref(), Some("b"));
+        for bad in ["u.count", "mainx.count", "main"] {
+            let c =
+                config::parse(&format!(r#"{{"clock":"c","input":[{{"net":"{bad}"}}]}}"#)).unwrap();
+            assert!(
+                in_top(c, "main").unwrap_err().contains("must start"),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

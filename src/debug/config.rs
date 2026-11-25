@@ -72,10 +72,11 @@ pub enum UplinkKind {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InputNet {
-    /// The net: its instance path and name before flattening, such as
-    /// u_ctrl.state, or just its name in the top module, such as count.
+    /// The net: its instance path from the top module, starting with the top
+    /// module's name, such as main.u_ctrl.state, or main.count for a net in
+    /// the top module itself.
     pub net: String,
-    /// The host's name for it. Defaults to the net.
+    /// The host's name for it. Defaults to the net's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
@@ -86,7 +87,7 @@ pub struct InputNet {
 pub struct OutputNet {
     /// The net, named as for inputs.
     pub net: String,
-    /// The host's name for it. Defaults to the net.
+    /// The host's name for it. Defaults to the net's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// override: the debugger can take over a net the design drives, and
@@ -159,7 +160,7 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
 fn check_net(net: &str) -> Result<(), String> {
     let bad = |why: &str| {
         Err(format!(
-            "The net {net:?} {why}. Name a whole net by its instance path, such as u_ctrl.state."
+            "The net {net:?} {why}. Name a whole net by its instance path, such as main.u_ctrl.state."
         ))
     };
     if net.is_empty() {

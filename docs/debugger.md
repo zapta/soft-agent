@@ -67,7 +67,7 @@ constrain them.
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| R1 | A debug configuration file names the nets to read and to write, by hierarchical name (such as `u_ctrl.state`); widths come from the design. | Must |
+| R1 | A debug configuration file names the nets to read and to write, by hierarchical name from the top module (such as `main.u_ctrl.state`); widths come from the design. | Must |
 | R2 | Nets can also be marked in the design itself (an attribute or a probe module), and the build finds them. | Later |
 | R3 | A debug build of an unchanged design adds the debugger; a normal build of the same sources has no trace of it. | Must |
 | R4 | The host reads any listed net, and writes any net listed as writable, by name. | Must |
@@ -123,12 +123,12 @@ An example, for the iCESugar v1.5:
   // tx and rx can be left out: they default to the board's UART
   "uplink": { "kind": "uart", "tx": "6", "rx": "4", "baud": 115200 },
   "input": [
-    { "net": "count", "name": "counter" },
-    { "net": "blink" },
-    { "net": "u_ctrl.state" }
+    { "net": "main.count", "name": "counter" },
+    { "net": "main.blink", "name": "blink" },
+    { "net": "main.u_ctrl.state" }
   ],
   "output": [
-    { "net": "blink", "name": "blink_force", "mode": "override" }
+    { "net": "main.blink", "name": "blink_force", "mode": "override" }
   ]
 }
 ```
@@ -147,7 +147,7 @@ An example, for the iCESugar v1.5:
   PMOD. `baud` defaults to 115200.
 - `input` and `output`, from the debugger's side, as AMD's VIO names
   probe\_in and probe\_out: an input is a net it reads, an output a net it
-  drives. `name` is the host's name for it (defaults to the net name); widths
+  drives. `name` is the host's name for it (defaults to the net's path); widths
   come from the design, not the file.
 - `mode` of an output: `override` (the debugger can take over a net the
   design drives, and releases it back to the design) or `register` (a net
@@ -171,7 +171,7 @@ over a net that the design already drives.
 
 | Option | How it looks | For | Against |
 | --- | --- | --- | --- |
-| A. Names in the file (version 1) | `"net": "u_ctrl.state"` | No design edits at all (R3); one place to see what is debugged | Names break when code is renamed; synthesis renames and removes nets, so the build must keep them alive and say when it can't (R9) |
+| A. Names in the file (version 1) | `"net": "main.u_ctrl.state"` | No design edits at all (R3); one place to see what is debugged | Names break when code is renamed; synthesis renames and removes nets, so the build must keep them alive and say when it can't (R9) |
 | B. Attributes in the design (later) | `(* logix_debug = "input" *) reg [3:0] state;` | Travels with the code, survives renames; a normal build ignores unknown attributes | Edits the design; attributes alone don't say the host name or write mode unless their value grows a small syntax |
 | C. Probe modules in the design (later) | `logix_probe #(.NAME("state")) p (.value(state));` and `logix_source #(.NAME("en")) s (.design(en_logic), .value(en));` | Explicit and simulatable: a testbench sees the same pass-through; a write is a clean mux the designer placed | A normal build needs the probe modules' pass-through file too; most design edits of the three |
 
@@ -190,11 +190,14 @@ Writes, by mode:
 
 ### Naming rules (version 1)
 
-- A name is a full instance path, dot-separated, then the net:
-  `u_core.u_fifo.count`. A net in the top module is just its name: `count`.
+- A name is a full instance path, dot-separated, starting with the top
+  module's name, then the net: `main.u_core.u_fifo.count`. A net in the top
+  module itself is `main.count`. Starting with the top makes a path read the
+  same as in a testbench or a waveform, and the build checks it against
+  `top_module`.
 - Each instance is its own net: a module instantiated twice gives
-  `u_lane0.err` and `u_lane1.err`, and the file lists each one it wants.
-- Generate blocks are written as yosys names them: `gen_lane[2].u_lane.err`.
+  `main.u_lane0.err` and `main.u_lane1.err`, and the file lists each one it wants.
+- Generate blocks are written as yosys names them: `main.gen_lane[2].u_lane.err`.
 - Whole nets only: no bit selects (`bus[7:4]`) and no wildcards in version 1.
 - A name that matches no net, or more than one, is a build error (R9).
 
@@ -388,14 +391,15 @@ move unchanged; only where the code lives changes. To keep that easy:
 | Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later |
 | Q8 | Several debug files per project, merged? | One file per build request |
 | Q9 | Where the schema lives? | In this repo, under `schemas/` |
-| Q10 | Naming rules? | Full instance paths, whole nets, generate names as yosys prints them, no wildcards (see Naming rules) |
+| Q10 | Naming rules? | Full instance paths starting with the top module (`main.u_ctrl.state`), whole nets, generate names as yosys prints them, no wildcards (see Naming rules) |
 
 ## First milestone
 
 On the iCESugar v1.5 with the blinky design, its counter moved into a
 submodule (`u_counter`), on 2026-11-24:
 
-- [x] Read three nets (`u_counter.count`, `u_counter.tick`, `blink`) named in
+- [x] Read three nets (`main.u_counter.count`, `main.u_counter.tick`,
+  `main.blink`) named in
   a `debug.jsonc`. Two reads 0.26 s apart saw `count` advance 3.12 million
   cycles, as a 12 MHz clock does.
 - [x] Write one net in `override` mode, then release it: the writes and the

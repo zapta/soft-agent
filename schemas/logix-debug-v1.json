@@ -104,11 +104,11 @@
       "type": "object",
       "properties": {
         "net": {
-          "description": "The net: its instance path and name before flattening, such as\nu_ctrl.state, or just its name in the top module, such as count.",
+          "description": "The net: its instance path from the top module, starting with the top\nmodule's name, such as main.u_ctrl.state, or main.count for a net in\nthe top module itself.",
           "type": "string"
         },
         "name": {
-          "description": "The host's name for it. Defaults to the net.",
+          "description": "The host's name for it. Defaults to the net's path.",
           "type": [
             "string",
             "null"
@@ -129,7 +129,7 @@
           "type": "string"
         },
         "name": {
-          "description": "The host's name for it. Defaults to the net.",
+          "description": "The host's name for it. Defaults to the net's path.",
           "type": [
             "string",
             "null"
