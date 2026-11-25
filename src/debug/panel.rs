@@ -1,6 +1,6 @@
 //! debug_panel: an interactive page for a debug session, served by
-//! soft-agent on 127.0.0.1 and opened in the browser. It shows the inputs
-//! live and drives and releases the outputs, through the same sessions as
+//! soft-agent on 127.0.0.1 and opened in the browser. It shows the watched
+//! nets live and drives and releases the driven ones, through the same sessions as
 //! the debug tools.
 //!
 //! Only this computer can reach the server (it listens on 127.0.0.1), and
@@ -237,10 +237,11 @@ async fn handle(mut stream: TcpStream, port: u16, token: &str) -> Option<()> {
     Some(())
 }
 
-/// The session's build and outputs, and a fresh snapshot of its inputs.
+/// The session's build and driven nets, and a fresh snapshot of the
+/// watched ones.
 fn state(id: &str, read_values: bool) -> Result<Value, ToolError> {
     let info = session::info(id)?;
-    let values = if read_values && !info.inputs.is_empty() {
+    let values = if read_values && !info.watch.is_empty() {
         session::read(session::DebugReadInput {
             session: id.to_string(),
             names: None,
@@ -259,8 +260,8 @@ pub struct DebugPanel;
 impl EngineTool for DebugPanel {
     const NAME: &'static str = "debug_panel";
     const DESCRIPTION: &'static str = "Opens an interactive panel for a debug session in the \
-        browser: it shows the inputs' values live (as hex, decimal and bits) and has controls \
-        to drive each output and release it. soft-agent serves it on this computer only, at \
+        browser: it shows the watched nets live (as hex, decimal and bits) and has controls \
+        to drive each driven net and release it. soft-agent serves it on this computer only, at \
         127.0.0.1, with a random token in its address. The panel uses the same session as \
         debug_read and debug_write, so both can be used at once. Returns the address; with \
         open false it only returns it, such as for a host that shows pages itself.";

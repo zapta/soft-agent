@@ -20,7 +20,7 @@ pub struct DebugConfig {
     #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     /// The clock the debugger and its UART run on: a top-level input port of
-    /// the design, such as sys_clk. Every input and output net must be on
+    /// the design, such as sys_clk. Every watched and driven net must be on
     /// it.
     pub clock: String,
     /// The clock's frequency in MHz. Needed only when the clock port isn't
@@ -30,12 +30,13 @@ pub struct DebugConfig {
     /// How the debugger reaches the host: a UART, named as a resource of the
     /// board, or by its pins.
     pub uplink: Uplink,
-    /// Nets the debugger reads.
+    /// Nets the host can drive: take them over from the design, or drive
+    /// them alone, and release them.
     #[serde(default)]
-    pub input: Vec<InputNet>,
-    /// Nets the debugger drives.
+    pub drive: Vec<DriveNet>,
+    /// Nets the host reads.
     #[serde(default)]
-    pub output: Vec<OutputNet>,
+    pub watch: Vec<WatchNet>,
     /// Reserved for the capture phase; refused in version 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(skip)]
@@ -73,7 +74,7 @@ pub enum UplinkKind {
 /// A net the debugger reads.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct InputNet {
+pub struct WatchNet {
     /// A one-bit net, by its instance path from the top module, starting
     /// with the top module's name, such as main.u_ctrl.busy, or main.blink
     /// for a net in the top module itself. Give net or bus.
@@ -96,7 +97,7 @@ pub struct InputNet {
     pub parts: Vec<String>,
 }
 
-impl InputNet {
+impl WatchNet {
     /// True when the file named it with bus.
     pub fn is_bus(&self) -> bool {
         self.bus.is_some()
@@ -108,7 +109,7 @@ impl InputNet {
     }
 }
 
-impl OutputNet {
+impl DriveNet {
     pub fn is_bus(&self) -> bool {
         self.bus.is_some()
     }
@@ -129,12 +130,12 @@ pub enum Bus {
 /// A net the debugger drives.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct OutputNet {
-    /// A one-bit net, named as for inputs. Give net or bus.
+pub struct DriveNet {
+    /// A one-bit net, named as for watch. Give net or bus.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub net: String,
     /// A net of two bits or more, or a list of one-bit nets combined into a
-    /// bus, as for inputs; a list's nets are driven and released together.
+    /// bus, as for watch; a list's nets are driven and released together.
     /// Give net or bus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus: Option<Bus>,
@@ -149,22 +150,22 @@ pub struct OutputNet {
     /// release it back. register: the debugger always drives it. Defaults
     /// to override.
     #[serde(default)]
-    pub mode: OutputMode,
+    pub mode: DriveMode,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum OutputMode {
+pub enum DriveMode {
     #[default]
     Override,
     Register,
 }
 
-impl OutputMode {
+impl DriveMode {
     pub fn as_str(self) -> &'static str {
         match self {
-            OutputMode::Override => "override",
-            OutputMode::Register => "register",
+            DriveMode::Override => "override",
+            DriveMode::Register => "register",
         }
     }
 }
@@ -175,11 +176,11 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
     let mut config: DebugConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     // net or bus: after this, net holds the path either way (for a list,
     // the list as text), parts the paths, and bus stays set for a bus.
-    for i in &mut config.input {
-        i.parts = parts(&mut i.net, &i.bus, &i.name, "input")?;
+    for i in &mut config.watch {
+        i.parts = parts(&mut i.net, &i.bus, &i.name, "watch")?;
     }
-    for o in &mut config.output {
-        o.parts = parts(&mut o.net, &o.bus, &o.name, "output")?;
+    for o in &mut config.drive {
+        o.parts = parts(&mut o.net, &o.bus, &o.name, "drive")?;
     }
     if let Some(s) = &config.schema
         && s != SCHEMA_URL
@@ -202,31 +203,31 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
             );
         }
     }
-    if config.input.is_empty() && config.output.is_empty() {
-        return Err("The file names no nets: add some to input or output.".into());
+    if config.watch.is_empty() && config.drive.is_empty() {
+        return Err("The file names no nets: add some to watch or drive.".into());
     }
     let mut names = std::collections::BTreeSet::new();
     for p in config
-        .input
+        .watch
         .iter()
         .flat_map(|i| &i.parts)
-        .chain(config.output.iter().flat_map(|o| &o.parts))
+        .chain(config.drive.iter().flat_map(|o| &o.parts))
     {
         check_net(p)?;
     }
     let mut driven = std::collections::BTreeSet::new();
-    for p in config.output.iter().flat_map(|o| &o.parts) {
+    for p in config.drive.iter().flat_map(|o| &o.parts) {
         if !driven.insert(p) {
             return Err(format!(
-                "{p} is driven by two outputs: drive each net from one output."
+                "{p} is in two drive entries: drive each net from one."
             ));
         }
     }
     for (net, name) in config
-        .input
+        .watch
         .iter()
         .map(|i| (&i.net, &i.name))
-        .chain(config.output.iter().map(|o| (&o.net, &o.name)))
+        .chain(config.drive.iter().map(|o| (&o.net, &o.name)))
     {
         if !net.starts_with('{') {
             check_net(net)?;
@@ -235,7 +236,7 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
         if host.is_empty() {
             return Err(format!("The name of net {net:?} is empty."));
         }
-        // An input and an output may share a net, but not a host name.
+        // A watched and a driven entry may share a net, but not a host name.
         if !names.insert(host.to_string()) {
             return Err(format!(
                 "The name {host:?} is used twice: give one of them another name."
@@ -250,7 +251,7 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
     Ok(config)
 }
 
-/// An input's or output's paths, from net or bus.
+/// A watch or drive entry's paths, from net or bus.
 fn parts(
     net: &mut String,
     bus: &Option<Bus>,
@@ -281,7 +282,7 @@ fn parts(
             "{net:?}: give net (one bit) or bus (two bits or more), not both."
         )),
         (None, true) => Err(format!(
-            "An {what} names no net: give net (one bit) or bus (two bits or more)."
+            "A {what} entry names no net: give net (one bit) or bus (two bits or more)."
         )),
     }
 }
@@ -391,30 +392,30 @@ mod tests {
               "$schema": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json",
               "clock": "sys_clk",
               "uplink": { "kind": "uart", "resource": "uart", "baud": 115200 },
-              "input": [ { "net": "count", "name": "counter" }, { "net": "blink" },
+              "watch": [ { "net": "count", "name": "counter" }, { "net": "blink" },
                          { "net": "u_ctrl.state" }, { "net": "gen_lane[2].u_lane.err" } ],
               /* a block comment */
-              "output": [ { "net": "blink", "name": "blink_force", "mode": "override" } ]
+              "drive": [ { "net": "blink", "name": "blink_force", "mode": "override" } ]
             }"#,
         )
         .unwrap();
-        assert_eq!(c.input.len(), 4);
-        assert_eq!(c.output[0].mode, OutputMode::Override);
+        assert_eq!(c.watch.len(), 4);
+        assert_eq!(c.drive[0].mode, DriveMode::Override);
     }
 
     #[test]
     fn refuses_what_version_1_lacks() {
         for (text, why) in [
             (
-                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"bus[7:4]"}]}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"bus[7:4]"}]}"#,
                 "selects bits",
             ),
             (
-                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"u_*.x"}]}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"u_*.x"}]}"#,
                 "wildcard",
             ),
             (
-                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"a"}],"capture":{}}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"a"}],"capture":{}}"#,
                 "capture",
             ),
             (
@@ -422,15 +423,15 @@ mod tests {
                 "no nets",
             ),
             (
-                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"a"},{"net":"b","name":"a"}]}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"a"},{"net":"b","name":"a"}]}"#,
                 "twice",
             ),
             (
-                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"a"}],"$schema":"x"}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"a"}],"$schema":"x"}"#,
                 "$schema",
             ),
             (
-                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"a"}],"extra":1}"#,
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"a"}],"extra":1}"#,
                 "unknown field",
             ),
         ] {
@@ -443,7 +444,7 @@ mod tests {
     fn uplinks_name_a_resource_or_pins() {
         let up = |u: &str| {
             parse(&format!(
-                r#"{{"clock":"c","uplink":{u},"input":[{{"net":"main.a"}}]}}"#
+                r#"{{"clock":"c","uplink":{u},"watch":[{{"net":"main.a"}}]}}"#
             ))
         };
         let u = up(r#"{"kind":"uart","resource":"uart"}"#).unwrap().uplink;
@@ -467,12 +468,12 @@ mod tests {
     fn net_or_bus() {
         let p = |e: &str| {
             parse(&format!(
-                r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"input":[{e}]}}"#
+                r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"watch":[{e}]}}"#
             ))
         };
         let c = p(r#"{"bus":"main.count"}"#).unwrap();
         assert_eq!(
-            (c.input[0].net.as_str(), c.input[0].is_bus()),
+            (c.watch[0].net.as_str(), c.watch[0].is_bus()),
             ("main.count", true)
         );
         assert!(
@@ -490,22 +491,22 @@ mod tests {
                 r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"{io}":[{e}]}}"#
             ))
         };
-        let c = p("input", r#"{"bus":["pin.19","main.a"],"name":"x"}"#).unwrap();
-        assert_eq!(c.input[0].parts, vec!["pin.19", "main.a"]);
-        assert_eq!(c.input[0].net, "{pin.19, main.a}");
-        let c = p("output", r#"{"bus":["main.a","main.b"],"name":"y"}"#).unwrap();
-        assert!(c.output[0].is_list());
+        let c = p("watch", r#"{"bus":["pin.19","main.a"],"name":"x"}"#).unwrap();
+        assert_eq!(c.watch[0].parts, vec!["pin.19", "main.a"]);
+        assert_eq!(c.watch[0].net, "{pin.19, main.a}");
+        let c = p("drive", r#"{"bus":["main.a","main.b"],"name":"y"}"#).unwrap();
+        assert!(c.drive[0].is_list());
         for (io, e, why) in [
-            ("input", r#"{"bus":["main.a","main.b"]}"#, "needs a name"),
+            ("watch", r#"{"bus":["main.a","main.b"]}"#, "needs a name"),
             (
-                "input",
+                "watch",
                 r#"{"bus":["main.a"],"name":"x"}"#,
                 "fewer than two",
             ),
             (
-                "output",
+                "drive",
                 r#"{"bus":["main.a","main.a"],"name":"y"}"#,
-                "two outputs",
+                "two drive entries",
             ),
         ] {
             let err = p(io, e).unwrap_err();

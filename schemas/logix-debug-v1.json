@@ -12,7 +12,7 @@
       ]
     },
     "clock": {
-      "description": "The clock the debugger and its UART run on: a top-level input port of\nthe design, such as sys_clk. Every input and output net must be on\nit.",
+      "description": "The clock the debugger and its UART run on: a top-level input port of\nthe design, such as sys_clk. Every watched and driven net must be on\nit.",
       "type": "string"
     },
     "clock_mhz": {
@@ -27,19 +27,19 @@
       "description": "How the debugger reaches the host: a UART, named as a resource of the\nboard, or by its pins.",
       "$ref": "#/$defs/Uplink"
     },
-    "input": {
-      "description": "Nets the debugger reads.",
+    "drive": {
+      "description": "Nets the host can drive: take them over from the design, or drive\nthem alone, and release them.",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/InputNet"
+        "$ref": "#/$defs/DriveNet"
       },
       "default": []
     },
-    "output": {
-      "description": "Nets the debugger drives.",
+    "watch": {
+      "description": "Nets the host reads.",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/OutputNet"
+        "$ref": "#/$defs/WatchNet"
       },
       "default": []
     }
@@ -100,7 +100,62 @@
         "uart"
       ]
     },
-    "InputNet": {
+    "DriveNet": {
+      "description": "A net the debugger drives.",
+      "type": "object",
+      "properties": {
+        "net": {
+          "description": "A one-bit net, named as for watch. Give net or bus.",
+          "type": "string"
+        },
+        "bus": {
+          "description": "A net of two bits or more, or a list of one-bit nets combined into a\nbus, as for watch; a list's nets are driven and released together.\nGive net or bus.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "The host's name for it. Defaults to the net's path.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "description": "override: the debugger can take over a net the design drives, and\nrelease it back. register: the debugger always drives it. Defaults\nto override.",
+          "$ref": "#/$defs/DriveMode",
+          "default": "override"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Bus": {
+      "description": "A bus: one net, or a list of one-bit nets and pins combined.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "DriveMode": {
+      "type": "string",
+      "enum": [
+        "override",
+        "register"
+      ]
+    },
+    "WatchNet": {
       "description": "A net the debugger reads.",
       "type": "object",
       "properties": {
@@ -128,61 +183,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "Bus": {
-      "description": "A bus: one net, or a list of one-bit nets and pins combined.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      ]
-    },
-    "OutputNet": {
-      "description": "A net the debugger drives.",
-      "type": "object",
-      "properties": {
-        "net": {
-          "description": "A one-bit net, named as for inputs. Give net or bus.",
-          "type": "string"
-        },
-        "bus": {
-          "description": "A net of two bits or more, or a list of one-bit nets combined into a\nbus, as for inputs; a list's nets are driven and released together.\nGive net or bus.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Bus"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "name": {
-          "description": "The host's name for it. Defaults to the net's path.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "mode": {
-          "description": "override: the debugger can take over a net the design drives, and\nrelease it back. register: the debugger always drives it. Defaults\nto override.",
-          "$ref": "#/$defs/OutputMode",
-          "default": "override"
-        }
-      },
-      "additionalProperties": false
-    },
-    "OutputMode": {
-      "type": "string",
-      "enum": [
-        "override",
-        "register"
-      ]
     }
   },
   "$id": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json"

@@ -122,15 +122,15 @@ pub struct DebugMap {
     pub read_bytes: usize,
     pub write_bytes: usize,
     pub enable_bytes: usize,
-    /// The nets the debugger reads, in read-space order.
-    pub inputs: Vec<MapInput>,
     /// The nets the debugger drives, in write-space order.
-    pub outputs: Vec<MapOutput>,
+    pub drive: Vec<MapDrive>,
+    /// The nets the debugger reads, in read-space order.
+    pub watch: Vec<MapWatch>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct MapInput {
+pub struct MapWatch {
     /// The host's name for it.
     pub name: String,
     /// The net in the design; for a bus combined from a list, the list,
@@ -147,9 +147,9 @@ pub struct MapInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct MapOutput {
+pub struct MapDrive {
     pub name: String,
-    /// The net, or a combined bus's list, as for inputs.
+    /// The net, or a combined bus's list, as for watched nets.
     pub net: String,
     /// A combined bus's members, most significant first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

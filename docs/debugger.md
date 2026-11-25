@@ -122,13 +122,13 @@ An example, for the iCESugar v1.5:
   "clock": "sys_clk",
   // The board's UART, by its resource name in the catalog (TX 6, RX 4).
   "uplink": { "kind": "uart", "resource": "uart", "baud": 115200 },
-  "input": [
+  "drive": [
+    { "net": "main.blink", "name": "blink_force", "mode": "override" }
+  ],
+  "watch": [
     { "bus": "main.count", "name": "counter" },
     { "net": "main.blink", "name": "blink" },
     { "bus": "main.u_ctrl.state" }
-  ],
-  "output": [
-    { "net": "main.blink", "name": "blink_force", "mode": "override" }
   ]
 }
 ```
@@ -138,7 +138,7 @@ An example, for the iCESugar v1.5:
   in the address (`-v1`; a breaking change gets `-v2`), so there is no
   separate `version` field. The schema lives in this repo, under `schemas/`.
 - `clock`: the one clock the debugger and its UART run on, a top-level port of
-  the design; every input and output net must be on it. Its frequency comes
+  the design; every watched and driven net must be on it. Its frequency comes
   from the board's clock resource when it is that pin, else from
   `clock_mhz` in the file.
 - `uplink`: required, so every file says where the debugger talks to the
@@ -152,29 +152,31 @@ An example, for the iCESugar v1.5:
 
   `baud` is optional and defaults to 115200. The debug map records the
   resource and the pins it resolved to.
-- `net` or `bus`, in each input and output: `net` names a one-bit net and
+- `net` or `bus`, in each watch and drive entry: `net` names a one-bit net and
   `bus` a net of two bits or more, so the file shows each one's shape. Give
   exactly one. The build checks it against the design: a 23-bit counter
   named with `net` is an error that says it is 23 bits.
 - A bus can also be a list that combines one-bit nets and pins into one
-  bus, for inputs and outputs alike: `{ "bus": ["pin.21", "pin.20",
+  bus, for watch and drive alike: `{ "bus": ["pin.21", "pin.20",
   "pin.19", "pin.18"], "name": "switches_n" }`. The first member is the
   most significant bit, as in a Verilog concatenation, so `pin.18` is bit 0
   here. Each member must be one bit, and a list needs at least two members
-  and a `name`. An output list's nets share one override enable, so they
-  are taken over and released together, and pins can't be in an output
-  list. A net can be driven by only one output.
-- `input` and `output`, from the debugger's side, as AMD's VIO names
-  probe\_in and probe\_out: an input is a net it reads, an output a net it
-  drives. `name` is the host's name for it (defaults to the net's path); widths
+  and a `name`. A drive list's nets share one override enable, so they
+  are taken over and released together, and pins can't be in a drive
+  list. A net can be in only one drive entry.
+- `drive` and `watch`, from the host's side: `drive` lists the nets the
+  host can drive (AMD's VIO calls them probe\_out, Intel sources), and
+  `watch` the nets it reads (probe\_in, probes). They were `output` and
+  `input` in earlier drafts, which read backwards from the design's side.
+  `name` is the host's name for each (defaults to the net's path); widths
   come from the design, not the file.
-- `mode` of an output: `override` (the debugger can take over a net the
+- `mode` of a drive entry: `override` (the debugger can take over a net the
   design drives, and releases it back to the design) or `register` (a net
   with no driver in the design, driven only by the debugger). See the next
   section.
 
-For the capture phase, the file gains a `capture` section alongside `input`
-and `output` (signals, depth, trigger, sample clock). Version 1 reserves the
+For the capture phase, the file gains a `capture` section alongside `watch`
+and `drive` (signals, depth, trigger, sample clock). Version 1 reserves the
 key and refuses it with "not supported yet", so files written now stay valid
 later.
 
@@ -191,7 +193,7 @@ over a net that the design already drives.
 | Option | How it looks | For | Against |
 | --- | --- | --- | --- |
 | A. Names in the file (version 1) | `"bus": "main.u_ctrl.state"` | No design edits at all (R3); one place to see what is debugged | Names break when code is renamed; synthesis renames and removes nets, so the build must keep them alive and say when it can't (R9) |
-| B. Attributes in the design (later) | `(* logix_debug = "input" *) reg [3:0] state;` | Travels with the code, survives renames; a normal build ignores unknown attributes | Edits the design; attributes alone don't say the host name or write mode unless their value grows a small syntax |
+| B. Attributes in the design (later) | `(* logix_debug = "watch" *) reg [3:0] state;` | Travels with the code, survives renames; a normal build ignores unknown attributes | Edits the design; attributes alone don't say the host name or write mode unless their value grows a small syntax |
 | C. Probe modules in the design (later) | `logix_probe #(.NAME("state")) p (.value(state));` and `logix_source #(.NAME("en")) s (.design(en_logic), .value(en));` | Explicit and simulatable: a testbench sees the same pass-through; a write is a clean mux the designer placed | A normal build needs the probe modules' pass-through file too; most design edits of the three |
 
 B and C differ in kind: an attribute is a note that adds no hardware, so the
@@ -264,7 +266,7 @@ nets.
 - **Command engine + UART:** parses frames and answers them. At 12 MHz and
   115200 baud the divisor is 104 (0.16% off), well within UART tolerance.
 - **Clock domains:** version 1 has one clock, shared by the UART and the
-  debugger, and every input and output net must be on it. Nets from other
+  debugger, and every watched and driven net must be on it. Nets from other
   domains come later, with synchronizers: two flip-flops for single bits, a
   handshake for buses (R11).
 - **Size:** measured on the blinky milestone.
@@ -353,9 +355,9 @@ debug map. All are soft-agent extension tools in the engine's style
 | `debug_build` | Builds with a debug file: inserts the debugger, then the usual synthesis, place and route, packing | Same fields as `build`, plus `debug_file`; writes `debug_map.json` and reports the debugger's resources apart |
 | `debug_open` | Opens a session on a board's debugger, from a build folder and a serial port | Reads the debugger's build ID first and refuses a mismatch (R8) |
 | `debug_read` | Reads named nets, in one snapshot | Values as numbers and as bit strings, with widths |
-| `debug_write` | Writes a named net, or releases an override back to the design | Refuses names that aren't outputs |
+| `debug_write` | Writes a named net, or releases an override back to the design | Refuses names that aren't in drive |
 | `debug_close` | Ends the session | |
-| `debug_panel` | Opens an interactive panel for a session in the browser | Inputs refresh live; each output has drive and release controls (0 and 1 buttons for one bit) |
+| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused; each driven net has value and release controls (0 and 1 buttons for one bit) |
 
 - **The port is shared.** The debugger owns the UART while a session is open,
   so the engine's `open_serial` on the same port is refused in version 1. A
@@ -414,7 +416,7 @@ move unchanged; only where the code lives changes. To keep that easy:
 | Q2 | Where nets are chosen: the file, the design, or both? | The debug file only for now; marking in the design later |
 | Q3 | How the debugger gets in: a yosys pre-pass, soft-agent's own build, or an engine hook? | Yosys pre-pass now (no engine change); an engine hook when moving it |
 | Q4 | Writes: `register` only first, or `override` of driven nets too? | Both, if yosys `expose -cut` works as expected; else `register` first |
-| Q5 | Debugger clock: always the board clock, or any net? | One clock for the UART and the debugger, the board's clock resource by default; every input and output net must be on it |
+| Q5 | Debugger clock: always the board clock, or any net? | One clock for the UART and the debugger, the board's clock resource by default; every watched and driven net must be on it |
 | Q6 | The UART when the design uses it too? | Refuse in version 1; console channel later |
 | Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later |
 | Q8 | Several debug files per project, merged? | One file per build request |
@@ -477,7 +479,11 @@ of a variable shift, and register the reply byte.
 - **Sessions:** `debug_open` checks the build ID and the read and write
   sizes, then releases every override and clears the write registers, since
   the debugger can't be asked for them. `debug_close` releases them too.
-  `debug_read` reads inputs only; to read a driven net, list it in `input`
+  Every `debug_read` and `debug_write` asks the debugger for its build ID
+  first (one INFO frame, about a millisecond), and refuses when the board
+  was programmed with another build after `debug_open`, since the session's
+  map would no longer fit.
+  `debug_read` reads watched nets only; to read a driven net, list it in `watch`
   as well.
 - **Limits:** a READ returns up to 128 bytes and a WRITE carries 6; the host
   splits larger spaces. A frame that stops arriving is dropped after about
@@ -490,7 +496,7 @@ of a variable shift, and register the reply byte.
   in the address `debug_panel` returns, and a `127.0.0.1` or `localhost`
   Host header, so other web pages can't reach the board through it. Its API
   is `GET /api/sessions`, `GET /api/state?session=` (the session's map, the
-  host's output values and a fresh snapshot) and `POST /api/write` (the
+  host's drive values and a fresh snapshot) and `POST /api/write` (the
   `debug_write` input). It polls at slightly irregular periods (about 4 per
   second, 1 per second, or every 5 s), since a round period can match a
   design's own and show the same phase at every read.

@@ -27,8 +27,8 @@ use logix_engine::state::EngineState;
 use logix_engine::tools::build as engine_build;
 use logix_engine::tools::{Call, EngineTool};
 
-use super::config::{self, DebugConfig, OutputMode};
-use super::protocol::{self, DebugMap, MapInput, MapOutput};
+use super::config::{self, DebugConfig, DriveMode};
+use super::protocol::{self, DebugMap, MapDrive, MapWatch};
 
 /// The debugger's Verilog, written into each debug build.
 const DEBUGGER_V: &str = include_str!("hdl/logix_debugger.v");
@@ -47,8 +47,8 @@ impl EngineTool for DebugBuild {
     const DESCRIPTION: &'static str = "Builds an FPGA design with the Logix debugger in it, so a \
         host can read and drive the design's nets on the board while it runs (debug_open, \
         debug_read, debug_write). Takes the same fields as build, plus debug_file: a JSONC \
-        file in the source folder naming the nets to read (input) and drive (output), by \
-        instance path such as u_ctrl.state, and the clock the debugger runs on. The debugger \
+        file in the source folder naming the nets to watch (read) and drive, by \
+        instance path such as main.u_ctrl.state, and the clock the debugger runs on. The debugger \
         talks over the board's UART, so the design must not use the UART pins. The design's \
         own sources are unchanged; a normal build of them has no debugger. Writes \
         debug_map.json into the build folder, which the debug tools read. Version 1 supports \
@@ -105,10 +105,10 @@ pub struct DebugBuildOutput {
     pub debug_map: String,
     /// The build ID the debugger reports, 8 hex digits.
     pub build_id: String,
-    /// The nets the debugger reads.
-    pub inputs: Vec<MapInput>,
     /// The nets the debugger drives.
-    pub outputs: Vec<MapOutput>,
+    pub drive: Vec<MapDrive>,
+    /// The nets the debugger reads.
+    pub watch: Vec<MapWatch>,
     /// The debugger's own share, synthesized alone.
     pub debugger: DebuggerUse,
 }
@@ -206,8 +206,8 @@ pub async fn run(
     let id = u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]);
     map.build_id = format!("{id:08x}");
 
-    let parts: Vec<Vec<String>> = config.input.iter().map(|i| i.parts.clone()).collect();
-    let out_parts: Vec<Vec<String>> = config.output.iter().map(|o| o.parts.clone()).collect();
+    let parts: Vec<Vec<String>> = config.watch.iter().map(|i| i.parts.clone()).collect();
+    let out_parts: Vec<Vec<String>> = config.drive.iter().map(|o| o.parts.clone()).collect();
     let top_v = debug_top(
         &input.top_module,
         &design,
@@ -219,12 +219,12 @@ pub async fn run(
     );
     write(&gen_dir.join("debug_top.v"), &top_v)?;
     // The map names nets as the debug file does, from the top module.
-    for i in &mut map.inputs {
+    for i in &mut map.watch {
         if !i.net.starts_with(PIN_PREFIX) && i.members.is_empty() {
             i.net = format!("{}.{}", input.top_module, i.net);
         }
     }
-    for o in &mut map.outputs {
+    for o in &mut map.drive {
         if o.members.is_empty() {
             o.net = format!("{}.{}", input.top_module, o.net);
         }
@@ -284,8 +284,8 @@ pub async fn run(
         build: value,
         debug_map: protocol::MAP_FILE.into(),
         build_id: map.build_id.clone(),
-        inputs: map.inputs,
-        outputs: map.outputs,
+        watch: map.watch,
+        drive: map.drive,
         debugger,
     })
 }
@@ -294,7 +294,7 @@ pub async fn run(
 /// constraint file puts at 18.
 const PIN_PREFIX: &str = "pin.";
 
-/// For each pin.<pin> input, the top-level port bit the constraint file
+/// For each watched pin.<pin>, the top-level port bit the constraint file
 /// puts on that pin, as a Verilog expression such as sw[0].
 fn pin_ports(
     config: &DebugConfig,
@@ -302,7 +302,7 @@ fn pin_ports(
     pcf_name: &str,
 ) -> Result<BTreeMap<String, String>, ToolError> {
     let mut out = BTreeMap::new();
-    for part in config.input.iter().flat_map(|i| &i.parts) {
+    for part in config.watch.iter().flat_map(|i| &i.parts) {
         let Some(pin) = part.strip_prefix(PIN_PREFIX) else {
             continue;
         };
@@ -337,7 +337,7 @@ fn in_top(mut config: DebugConfig, top: &str) -> Result<DebugConfig, String> {
                 .into(),
         );
     }
-    for p in config.output.iter().flat_map(|o| &o.parts) {
+    for p in config.drive.iter().flat_map(|o| &o.parts) {
         if p.starts_with(PIN_PREFIX) {
             return Err(format!(
                 "{p}: version 1 reads pins but can't drive them. Drive an internal net instead."
@@ -363,7 +363,7 @@ fn in_top(mut config: DebugConfig, top: &str) -> Result<DebugConfig, String> {
         *net = rest;
         Ok(())
     };
-    for i in &mut config.input {
+    for i in &mut config.watch {
         if i.is_list() {
             for p in &mut i.parts {
                 strip(p, &mut None)?;
@@ -373,7 +373,7 @@ fn in_top(mut config: DebugConfig, top: &str) -> Result<DebugConfig, String> {
             i.parts = vec![i.net.clone()];
         }
     }
-    for o in &mut config.output {
+    for o in &mut config.drive {
         if o.is_list() {
             for p in &mut o.parts {
                 strip(p, &mut None)?;
@@ -546,14 +546,14 @@ pub fn pcf_pins(text: &str) -> BTreeMap<String, String> {
 
 /// Every net the file names, once, with whether the debugger drives it and
 /// how.
-fn unique_nets(config: &DebugConfig) -> Vec<(String, Option<OutputMode>)> {
-    let mut nets: Vec<(String, Option<OutputMode>)> = Vec::new();
-    for p in config.input.iter().flat_map(|i| &i.parts) {
+fn unique_nets(config: &DebugConfig) -> Vec<(String, Option<DriveMode>)> {
+    let mut nets: Vec<(String, Option<DriveMode>)> = Vec::new();
+    for p in config.watch.iter().flat_map(|i| &i.parts) {
         if !nets.iter().any(|(n, _)| n == p) {
             nets.push((p.clone(), None));
         }
     }
-    for o in &config.output {
+    for o in &config.drive {
         for p in &o.parts {
             match nets.iter_mut().find(|(n, _)| n == p) {
                 Some((_, m)) => *m = Some(o.mode),
@@ -579,7 +579,7 @@ struct Design {
     ports: Vec<Port>,
     /// Widths of the nets the file names.
     widths: BTreeMap<String, usize>,
-    /// The pin.<pin> inputs' port bits (pin_ports).
+    /// The watched pin.<pin>s' port bits (pin_ports).
     pin_ports: BTreeMap<String, String>,
 }
 
@@ -591,7 +591,7 @@ fn pattern(net: &str) -> String {
 
 async fn prepass(
     input: &DebugBuildInput,
-    nets: &[(String, Option<OutputMode>)],
+    nets: &[(String, Option<DriveMode>)],
     src: &Path,
     gen_dir: &Path,
     bin: &Path,
@@ -726,7 +726,7 @@ async fn prepass(
 /// The pre-pass's failure, in the user's terms.
 fn prepass_error(
     output: &str,
-    nets: &[(String, Option<OutputMode>)],
+    nets: &[(String, Option<DriveMode>)],
     input: &DebugBuildInput,
     src: &Path,
 ) -> ToolError {
@@ -820,7 +820,7 @@ fn layout(
         }
         Ok(())
     };
-    for i in &config.input {
+    for i in &config.watch {
         members_one_bit(&i.net, i.is_list(), &i.parts)?;
         let width = i.parts.iter().map(|p| design.widths[p]).sum();
         shape(&i.net, i.is_bus(), width)?;
@@ -828,7 +828,7 @@ fn layout(
             Some(config::Bus::List(list)) => list.clone(),
             _ => Vec::new(),
         };
-        inputs.push(MapInput {
+        inputs.push(MapWatch {
             name: i.name.clone().unwrap_or_else(|| i.net.clone()),
             net: i.net.clone(),
             members,
@@ -841,7 +841,7 @@ fn layout(
     let mut outputs = Vec::new();
     let mut offset = 0;
     let mut enables = 0;
-    for o in &config.output {
+    for o in &config.drive {
         members_one_bit(&o.net, o.is_list(), &o.parts)?;
         let width = o.parts.iter().map(|p| design.widths[p]).sum();
         shape(&o.net, o.is_bus(), width)?;
@@ -849,11 +849,11 @@ fn layout(
             Some(config::Bus::List(list)) => list.clone(),
             _ => Vec::new(),
         };
-        let enable_bit = (o.mode == OutputMode::Override).then(|| {
+        let enable_bit = (o.mode == DriveMode::Override).then(|| {
             enables += 1;
             enables - 1
         });
-        outputs.push(MapOutput {
+        outputs.push(MapDrive {
             name: o.name.clone().unwrap_or_else(|| o.net.clone()),
             net: o.net.clone(),
             width,
@@ -865,9 +865,9 @@ fn layout(
         offset += width;
     }
     if config
-        .output
+        .drive
         .iter()
-        .filter(|o| o.mode == OutputMode::Override)
+        .filter(|o| o.mode == DriveMode::Override)
         .count()
         != outputs.iter().filter(|o| o.enable_bit.is_some()).count()
     {
@@ -888,8 +888,8 @@ fn layout(
         read_bytes: read_bits.max(1).div_ceil(8),
         write_bytes: offset.max(1).div_ceil(8),
         enable_bytes: enables.max(1).div_ceil(8),
-        inputs,
-        outputs,
+        watch: inputs,
+        drive: outputs,
     })
 }
 
@@ -909,7 +909,7 @@ fn vid(name: &str) -> String {
     }
 }
 
-/// `parts`, `out_parts`: each input's and output's paths, most significant
+/// `parts`, `out_parts`: each watched and driven entry's paths, most significant
 /// first (as the pre-pass names them).
 fn debug_top(
     user_top: &str,
@@ -920,13 +920,9 @@ fn debug_top(
     link: &Link,
     id: u32,
 ) -> String {
-    let read_w = map.inputs.iter().map(|i| i.width).sum::<usize>();
-    let write_w = map.outputs.iter().map(|o| o.width).sum::<usize>();
-    let enables = map
-        .outputs
-        .iter()
-        .filter(|o| o.enable_bit.is_some())
-        .count();
+    let read_w = map.watch.iter().map(|i| i.width).sum::<usize>();
+    let write_w = map.drive.iter().map(|o| o.width).sum::<usize>();
+    let enables = map.drive.iter().filter(|o| o.enable_bit.is_some()).count();
     let own = |n: &str| design.ports.iter().any(|p| p.name == n);
 
     // One wire per exposed design net, named by its order.
@@ -980,8 +976,8 @@ fn debug_top(
     for (net, _) in &wires {
         conns.push(format!(".{}({})", vid(net), wire_of[net]));
     }
-    for (o, ps) in map.outputs.iter().zip(out_parts) {
-        // The parts take the output's bits, the first the most significant.
+    for (o, ps) in map.drive.iter().zip(out_parts) {
+        // The parts take the entry's bits, the first the most significant.
         let mut top_bit = o.offset + o.width;
         for p in ps {
             let w = design.widths[p];
@@ -1002,7 +998,7 @@ fn debug_top(
     );
 
     // The read space, first net in the low bits.
-    // Each input's parts are already most significant first.
+    // Each watched entry's parts are already most significant first.
     let bits: Vec<String> = parts.iter().rev().flatten().map(|p| signal(p)).collect();
     let rd = if bits.is_empty() {
         "1'b0".to_string()
@@ -1031,10 +1027,10 @@ async fn debugger_use(
     bin: &Path,
     call: &Call,
 ) -> DebuggerUse {
-    let read_w = map.inputs.iter().map(|i| i.width).sum::<usize>().max(1);
-    let write_w = map.outputs.iter().map(|o| o.width).sum::<usize>().max(1);
+    let read_w = map.watch.iter().map(|i| i.width).sum::<usize>().max(1);
+    let write_w = map.drive.iter().map(|o| o.width).sum::<usize>().max(1);
     let enables = map
-        .outputs
+        .drive
         .iter()
         .filter(|o| o.enable_bit.is_some())
         .count()
@@ -1145,16 +1141,16 @@ mod tests {
     #[test]
     fn paths_start_with_the_top() {
         let c = config::parse(
-            r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"main.u.count"},{"net":"main.blink","name":"b"}]}"#,
+            r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"main.u.count"},{"net":"main.blink","name":"b"}]}"#,
         )
         .unwrap();
         let c = in_top(c, "main").unwrap();
-        assert_eq!(c.input[0].net, "u.count");
-        assert_eq!(c.input[0].name.as_deref(), Some("main.u.count"));
-        assert_eq!(c.input[1].name.as_deref(), Some("b"));
+        assert_eq!(c.watch[0].net, "u.count");
+        assert_eq!(c.watch[0].name.as_deref(), Some("main.u.count"));
+        assert_eq!(c.watch[1].name.as_deref(), Some("b"));
         for bad in ["u.count", "mainx.count", "main"] {
             let c =
-                config::parse(&format!(r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"input":[{{"net":"{bad}"}}]}}"#)).unwrap();
+                config::parse(&format!(r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"watch":[{{"net":"{bad}"}}]}}"#)).unwrap();
             assert!(
                 in_top(c, "main").unwrap_err().contains("must start"),
                 "{bad}"
@@ -1165,11 +1161,11 @@ mod tests {
     #[test]
     fn pins_read_the_port_placed_there() {
         let c = config::parse(
-            r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"input":[{"net":"pin.18"},{"net":"pin.19"}]}"#,
+            r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"pin.18"},{"net":"pin.19"}]}"#,
         )
         .unwrap();
         let c = in_top(c, "main").unwrap();
-        assert_eq!(c.input[0].net, "pin.18");
+        assert_eq!(c.watch[0].net, "pin.18");
         let pins = pcf_pins("set_io sw[0] 18\nset_io key 19\n");
         let p = pin_ports(&c, &pins, "p.pcf").unwrap();
         assert_eq!(p["pin.18"], "sw[0]");

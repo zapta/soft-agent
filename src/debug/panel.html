@@ -60,7 +60,8 @@
   button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   button:disabled { opacity: .5; cursor: default; }
   .controls { display: flex; gap: 6px; align-items: center; }
-  label.live { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+  #pause { min-width: 6.5em; }
+  .paused-note { color: var(--muted); font-size: 12px; text-transform: none; letter-spacing: 0; }
   #error {
     display: none; margin: 0; padding: 10px 14px; border-radius: 8px;
     background: var(--warn-bg); color: var(--warn); white-space: pre-wrap;
@@ -77,7 +78,7 @@
   <span class="meta">Port <b id="port">–</b></span>
   <span class="meta">Build <b id="build">–</b></span>
   <span class="spacer"></span>
-  <label class="live"><input type="checkbox" id="live" checked> Live</label>
+  <button id="pause" title="Stop or restart the live updates">Pause</button>
   <!-- Not round periods: a design's own periods, such as a blinky's half
        second, would otherwise show the same phase at every read. -->
   <select id="rate" title="Refresh rate">
@@ -90,20 +91,20 @@
 <main>
   <p id="error"></p>
   <section>
-    <h2>Inputs <span class="meta" id="stamp"></span></h2>
-    <div class="scroll"><table id="inputs">
+    <h2>Drive</h2>
+    <div class="scroll"><table id="drive">
+      <thead><tr><th>Name</th><th>Net</th><th class="num">Bits</th><th>Mode</th><th>State</th><th>Value</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="empty" id="no-drive" hidden>This build drives no nets.</div>
+  </section>
+  <section>
+    <h2>Watch <span class="meta" id="stamp"></span> <span class="paused-note" id="paused-note" hidden>Paused</span></h2>
+    <div class="scroll"><table id="watch">
       <thead><tr><th>Name</th><th>Net</th><th class="num">Bits</th><th>Hex</th><th class="num">Decimal</th><th>Binary</th></tr></thead>
       <tbody></tbody>
     </table></div>
-    <div class="empty" id="no-inputs" hidden>This build reads no nets.</div>
-  </section>
-  <section>
-    <h2>Outputs</h2>
-    <div class="scroll"><table id="outputs">
-      <thead><tr><th>Name</th><th>Net</th><th class="num">Bits</th><th>Mode</th><th>State</th><th>Drive</th></tr></thead>
-      <tbody></tbody>
-    </table></div>
-    <div class="empty" id="no-outputs" hidden>This build drives no nets.</div>
+    <div class="empty" id="no-watch" hidden>This build watches no nets.</div>
   </section>
 </main>
 <script>
@@ -114,6 +115,7 @@
   let built = "";      // the session and build the tables were made for
   let busy = false;
   let timer = null;
+  let paused = false;
   const $ = (id) => document.getElementById(id);
 
   function api(path, opts = {}) {
@@ -140,16 +142,16 @@
   }
 
   function build(info) {
-    const ib = $("inputs").tBodies[0], ob = $("outputs").tBodies[0];
+    const ib = $("watch").tBodies[0], ob = $("drive").tBodies[0];
     ib.replaceChildren(); ob.replaceChildren();
-    for (const i of info.inputs) {
+    for (const i of info.watch) {
       const tr = document.createElement("tr");
       tr.dataset.name = i.name;
       tr.append(cell(i.name), cell(i.net, "net"), cell(String(i.width), "num"),
         cell("", "mono hex"), cell("", "mono num dec"), cell("", "mono bits"));
       ib.append(tr);
     }
-    for (const o of info.outputs) {
+    for (const o of info.drive) {
       const tr = document.createElement("tr");
       tr.dataset.name = o.name;
       const state = cell("");
@@ -190,8 +192,8 @@
         cell(o.mode), state, ctl);
       ob.append(tr);
     }
-    $("no-inputs").hidden = info.inputs.length > 0;
-    $("no-outputs").hidden = info.outputs.length > 0;
+    $("no-watch").hidden = info.watch.length > 0;
+    $("no-drive").hidden = info.drive.length > 0;
   }
 
   function setText(td, text) {
@@ -206,14 +208,14 @@
     $("port").textContent = info.port;
     $("build").textContent = info.build_id;
     for (const v of state.values) {
-      const tr = $("inputs").querySelector(`tr[data-name="${CSS.escape(v.name)}"]`);
+      const tr = $("watch").querySelector(`tr[data-name="${CSS.escape(v.name)}"]`);
       if (!tr) continue;
       setText(tr.querySelector(".hex"), v.hex);
       setText(tr.querySelector(".dec"), v.value === undefined || v.value === null ? "–" : String(v.value));
       setText(tr.querySelector(".bits"), v.bits);
     }
-    for (const o of info.outputs) {
-      const tr = $("outputs").querySelector(`tr[data-name="${CSS.escape(o.name)}"]`);
+    for (const o of info.drive) {
+      const tr = $("drive").querySelector(`tr[data-name="${CSS.escape(o.name)}"]`);
       if (!tr) continue;
       const td = tr.querySelector(".state");
       td.replaceChildren();
@@ -251,12 +253,12 @@
     } catch (e) {
       showError(e);
     }
-    refresh($("live").checked);
+    refresh(!paused);
   }
 
   function schedule() {
     clearInterval(timer);
-    if ($("live").checked) timer = setInterval(() => refresh(true), Number($("rate").value));
+    if (!paused) timer = setInterval(() => refresh(true), Number($("rate").value));
   }
 
   async function sessions() {
@@ -278,7 +280,13 @@
   }
 
   $("session").onchange = (e) => { session = e.target.value; built = ""; refresh(true); };
-  $("live").onchange = schedule;
+  $("pause").onclick = () => {
+    paused = !paused;
+    $("pause").textContent = paused ? "Resume" : "Pause";
+    $("pause").classList.toggle("primary", paused);
+    $("paused-note").hidden = !paused;
+    schedule();
+  };
   $("rate").onchange = schedule;
   $("refresh").onclick = () => refresh(true);
 

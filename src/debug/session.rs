@@ -129,6 +129,45 @@ fn reset(s: &mut Session) -> Result<(), ToolError> {
     write_space(s, protocol::WRITE, 0, s.map.write_bytes)
 }
 
+/// Asks the debugger for its build: Ok(Ok(id)) when it is the session's
+/// map's build, Ok(Err(id)) when it is another.
+fn board_build(s: &mut Session) -> Result<Result<String, String>, ToolError> {
+    let info = transact(s, protocol::INFO, &[])?;
+    if info.len() != 9 {
+        return Err(ToolError::engine(
+            "The debugger's INFO reply has the wrong length.",
+        ));
+    }
+    let id = format!(
+        "{:08x}",
+        u32::from_le_bytes([info[1], info[2], info[3], info[4]])
+    );
+    let read_bytes = u16::from_le_bytes([info[5], info[6]]) as usize;
+    let write_bytes = u16::from_le_bytes([info[7], info[8]]) as usize;
+    let same = info[0] == protocol::PROTOCOL_VERSION
+        && id == s.map.build_id
+        && read_bytes == s.map.read_bytes
+        && write_bytes == s.map.write_bytes;
+    Ok(if same { Ok(id) } else { Err(id) })
+}
+
+/// Before each read and write: the board may have been programmed with
+/// another build since debug_open, and the map would then be wrong.
+fn same_build(s: &mut Session) -> Result<(), ToolError> {
+    match board_build(s)? {
+        Ok(_) => Ok(()),
+        Err(board_id) => Err(ToolError::new(
+            Category::Setup,
+            format!(
+                "The board now runs another build (ID {board_id}), not this session's (ID {}): it was programmed after debug_open. Close this session, and open one with the build folder of the build on the board.",
+                s.map.build_id
+            ),
+        )
+        .with_data("board_build_id", &board_id)
+        .with_data("map_build_id", &s.map.build_id)),
+    }
+}
+
 // --- debug_open -------------------------------------------------------------
 
 pub struct DebugOpen;
@@ -163,10 +202,10 @@ pub struct DebugOpenOutput {
     pub port: String,
     /// The build ID the board's debugger reported, which matches the map.
     pub build_id: String,
-    /// What can be read: each input's name and width.
-    pub inputs: Vec<NetInfo>,
-    /// What can be driven: each output's name, width and mode.
-    pub outputs: Vec<NetInfo>,
+    /// What can be driven: each driven net's name, width and mode.
+    pub drive: Vec<NetInfo>,
+    /// What can be watched: each watched net's name and width.
+    pub watch: Vec<NetInfo>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -230,22 +269,9 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
         en: vec![0; map.enable_bytes],
         map,
     };
-    let info = transact(&mut s, protocol::INFO, &[])?;
-    if info.len() != 9 {
-        return Err(ToolError::engine(
-            "The debugger's INFO reply has the wrong length.",
-        ));
-    }
-    let id = u32::from_le_bytes([info[1], info[2], info[3], info[4]]);
-    let read_bytes = u16::from_le_bytes([info[5], info[6]]) as usize;
-    let write_bytes = u16::from_le_bytes([info[7], info[8]]) as usize;
-    let board_id = format!("{id:08x}");
-    if info[0] != protocol::PROTOCOL_VERSION
-        || board_id != s.map.build_id
-        || read_bytes != s.map.read_bytes
-        || write_bytes != s.map.write_bytes
-    {
-        return Err(ToolError::new(
+    let board_id = match board_build(&mut s)? {
+        Ok(id) => id,
+        Err(board_id) => return Err(ToolError::new(
             Category::Setup,
             format!(
                 "The board runs another debug build (ID {board_id}), not the one in {} (ID {}). Program this build with program_board, or open the build folder of the one on the board.",
@@ -253,16 +279,16 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
             ),
         )
         .with_data("board_build_id", &board_id)
-        .with_data("map_build_id", &s.map.build_id));
-    }
+        .with_data("map_build_id", &s.map.build_id)),
+    };
     reset(&mut s)?;
     let out = DebugOpenOutput {
         session: String::new(),
         port: input.port.clone(),
         build_id: board_id,
-        inputs: s
+        watch: s
             .map
-            .inputs
+            .watch
             .iter()
             .map(|i| NetInfo {
                 name: i.name.clone(),
@@ -271,9 +297,9 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
                 mode: None,
             })
             .collect(),
-        outputs: s
+        drive: s
             .map
-            .outputs
+            .drive
             .iter()
             .map(|o| NetInfo {
                 name: o.name.clone(),
@@ -298,7 +324,7 @@ pub struct DebugRead;
 impl EngineTool for DebugRead {
     const NAME: &'static str = "debug_read";
     const DESCRIPTION: &'static str = "Reads nets of the running design through a debug \
-        session, all in one snapshot taken in a single clock cycle. Give the input names to \
+        session, all in one snapshot taken in a single clock cycle. Give the watched names to \
         read (from debug_open), or none for all. Each value comes as bits (most significant \
         first), as hex and, up to 53 bits, as a number.";
     const READ_ONLY: bool = true;
@@ -311,7 +337,7 @@ impl EngineTool for DebugRead {
 pub struct DebugReadInput {
     /// The session, from debug_open.
     pub session: String,
-    /// The inputs to read, by name. Omitted means all.
+    /// The watched nets to read, by name. Omitted means all.
     #[serde(default)]
     pub names: Option<Vec<String>>,
 }
@@ -337,27 +363,28 @@ pub struct NetValue {
 
 pub fn read(input: DebugReadInput) -> Result<DebugReadOutput, ToolError> {
     with_session(&input.session, |s| {
-        let wanted: Vec<protocol::MapInput> = match &input.names {
-            None => s.map.inputs.clone(),
+        let wanted: Vec<protocol::MapWatch> = match &input.names {
+            None => s.map.watch.clone(),
             Some(names) => names
                 .iter()
                 .map(|n| {
                     s.map
-                        .inputs
+                        .watch
                         .iter()
                         .find(|i| i.name == *n)
                         .cloned()
                         .ok_or_else(|| {
                             let known: Vec<&str> =
-                                s.map.inputs.iter().map(|i| i.name.as_str()).collect();
+                                s.map.watch.iter().map(|i| i.name.as_str()).collect();
                             ToolError::request(format!(
-                                "names: {n:?} isn't an input of this build. Its inputs: {}.",
+                                "names: {n:?} isn't watched in this build. It watches: {}.",
                                 known.join(", ")
                             ))
                         })
                 })
                 .collect::<Result<_, _>>()?,
         };
+        same_build(s)?;
         transact(s, protocol::SNAPSHOT, &[])?;
         let mut bytes = Vec::with_capacity(s.map.read_bytes);
         while bytes.len() < s.map.read_bytes {
@@ -420,8 +447,8 @@ pub struct DebugWrite;
 impl EngineTool for DebugWrite {
     const NAME: &'static str = "debug_write";
     const DESCRIPTION: &'static str = "Drives a net of the running design through a debug \
-        session: an output from debug_open, by name. For an override output, writing takes the \
-        net over from the design until release; release gives it back. A register output is \
+        session: one of its drive names from debug_open. For an override one, writing takes the \
+        net over from the design until release; release gives it back. A register one is \
         always the debugger's. The value is a number, or a string in hex (0x..), binary (0b..) \
         or decimal, and must fit the net's width.";
     const READ_ONLY: bool = false;
@@ -434,12 +461,12 @@ impl EngineTool for DebugWrite {
 pub struct DebugWriteInput {
     /// The session, from debug_open.
     pub session: String,
-    /// The output to drive, by name.
+    /// The net to drive, by its name in the debug file's drive list.
     pub name: String,
     /// The value to drive. Required unless release is true.
     #[serde(default)]
     pub value: Option<serde_json::Value>,
-    /// Give an override output back to the design. Defaults to false.
+    /// Give an override net back to the design. Defaults to false.
     #[serde(default)]
     pub release: bool,
 }
@@ -456,16 +483,17 @@ pub struct DebugWriteOutput {
 
 pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
     with_session(&input.session, |s| {
+        same_build(s)?;
         let o = s
             .map
-            .outputs
+            .drive
             .iter()
             .find(|o| o.name == input.name)
             .cloned()
             .ok_or_else(|| {
-                let known: Vec<&str> = s.map.outputs.iter().map(|o| o.name.as_str()).collect();
+                let known: Vec<&str> = s.map.drive.iter().map(|o| o.name.as_str()).collect();
                 ToolError::request(format!(
-                    "name: {:?} isn't an output of this build. Its outputs: {}.",
+                    "name: {:?} isn't driven in this build. It drives: {}.",
                     input.name,
                     if known.is_empty() {
                         "none".into()
@@ -481,7 +509,7 @@ pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
             }
             let Some(bit) = o.enable_bit else {
                 return Err(ToolError::request(format!(
-                    "{} is a register output: the debugger always drives it, so it can't be released.",
+                    "{} is in register mode: the debugger always drives it, so it can't be released.",
                     o.name
                 )));
             };
@@ -647,7 +675,7 @@ mod tests {
 
 // --- For the panel ----------------------------------------------------------
 
-/// A session's outputs as the host last set them, and its build, for the
+/// A session's driven nets as the host last set them, and its build, for the
 /// debug panel.
 #[derive(Debug, Serialize)]
 pub struct SessionInfo {
@@ -656,8 +684,8 @@ pub struct SessionInfo {
     pub build_id: String,
     pub board: String,
     pub top_module: String,
-    pub inputs: Vec<NetInfo>,
-    pub outputs: Vec<OutputState>,
+    pub drive: Vec<OutputState>,
+    pub watch: Vec<NetInfo>,
 }
 
 #[derive(Debug, Serialize)]
@@ -680,9 +708,9 @@ pub fn info(id: &str) -> Result<SessionInfo, ToolError> {
             build_id: s.map.build_id.clone(),
             board: s.map.board.clone(),
             top_module: s.map.top_module.clone(),
-            inputs: s
+            watch: s
                 .map
-                .inputs
+                .watch
                 .iter()
                 .map(|i| NetInfo {
                     name: i.name.clone(),
@@ -691,9 +719,9 @@ pub fn info(id: &str) -> Result<SessionInfo, ToolError> {
                     mode: None,
                 })
                 .collect(),
-            outputs: s
+            drive: s
                 .map
-                .outputs
+                .drive
                 .iter()
                 .map(|o| {
                     let bits = protocol::get_bits(&s.wr, o.offset, o.width);
