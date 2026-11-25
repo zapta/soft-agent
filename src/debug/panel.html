@@ -40,7 +40,7 @@
   .card { display: inline-block; max-width: 100%; vertical-align: top; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .scroll { overflow-x: auto; }
   table { border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th, td { text-align: left; padding: 8px 20px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   tr:last-child td { border-bottom: none; }
   th + th, td + td { border-left: 1px solid var(--line); }
   thead th { border-bottom: 1px solid var(--line); }
@@ -193,7 +193,7 @@
     const chars = fmt === "bin" ? width
       : fmt === "dec" ? Math.max(1, Math.ceil(width * Math.log10(2)))
       : 2 + Math.ceil(width / 4);
-    td.style.width = `calc(${chars}ch + 30px)`;
+    td.style.width = `calc(${chars}ch + 42px)`;  // + padding, border and slack
   }
 
   // The net's path, at once, next to the pointer (the browser's own title
