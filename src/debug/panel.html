@@ -32,10 +32,20 @@
   .meta b { color: var(--text); font-weight: 500; font-family: var(--mono); }
   .spacer { flex: 1; }
   main { padding: 16px 20px; display: grid; gap: 16px; max-width: 1100px; }
-  section > h2 {
+  /* Collapsible sections: the title folds and unfolds its table. */
+  details.section > summary {
     margin: 0 0 8px; font-size: 16px; font-weight: 600;
-    display: flex; align-items: baseline; gap: 10px;
+    display: flex; align-items: center; gap: 8px;
+    cursor: pointer; list-style: none; user-select: none; width: fit-content;
   }
+  details.section > summary::-webkit-details-marker { display: none; }
+  details.section > summary::before {
+    content: ""; width: 0; height: 0; border-style: solid;
+    border-width: 5px 0 5px 7px; border-color: transparent transparent transparent currentColor;
+    transition: transform .15s;
+  }
+  details.section[open] > summary::before { transform: rotate(90deg); }
+  details.section:not([open]) > summary { margin-bottom: 0; }
   /* Each table, and its box, as wide as its content. */
   .card { display: inline-block; max-width: 100%; vertical-align: top; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .scroll { overflow-x: auto; }
@@ -74,8 +84,17 @@
   button:disabled { opacity: .5; cursor: default; }
   .controls { display: flex; gap: 6px; align-items: center; }
   #pause { min-width: 6.5em; }
-  #status { color: var(--muted); font-size: 13px; }
-  #status.live { color: var(--on); }
+  /* The panel's status, a badge: live, paused, stale or offline. */
+  #status {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 3px 12px; border-radius: 999px; border: 1px solid var(--line);
+    font-size: 14px; font-weight: 600; color: var(--muted);
+  }
+  #status::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+  #status.live { color: var(--on); border-color: var(--on); background: color-mix(in srgb, var(--on) 12%, transparent); }
+  #status.live::before { animation: pulse 1.6s ease-in-out infinite; }
+  #status.stale, #status.offline { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+  @keyframes pulse { 50% { opacity: .35; } }
   #error {
     display: none; margin: 0; padding: 10px 14px; border-radius: 8px;
     background: var(--warn-bg); color: var(--warn); white-space: pre-wrap;
@@ -106,8 +125,8 @@
 </header>
 <main>
   <p id="error"></p>
-  <section>
-    <h2>Drive</h2>
+  <details class="section" id="section-drive" open>
+    <summary>Drive</summary>
     <div class="card">
       <div class="scroll"><table id="drive">
         <thead><tr><th>Name</th><th class="num">Bits</th><th>Mode</th><th class="center">Format</th><th>State</th><th>Value</th></tr></thead>
@@ -115,9 +134,9 @@
       </table></div>
       <div class="empty" id="no-drive" hidden>This build drives no nets.</div>
     </div>
-  </section>
-  <section>
-    <h2>Watch</h2>
+  </details>
+  <details class="section" id="section-watch" open>
+    <summary>Watch</summary>
     <div class="card">
       <div class="scroll"><table id="watch">
         <thead><tr><th>Name</th><th class="num">Bits</th><th class="center">Format</th><th class="num">Value</th></tr></thead>
@@ -125,7 +144,7 @@
       </table></div>
       <div class="empty" id="no-watch" hidden>This build watches no nets.</div>
     </div>
-  </section>
+  </details>
 </main>
 <script>
 (() => {
@@ -139,12 +158,23 @@
   let lastRead = null;  // when the last read came back, in ms
   const $ = (id) => document.getElementById(id);
 
+  // True while the page can't reach soft-agent, the program serving it.
+  let offline = false;
+
+  // A request to soft-agent. A failure to reach it at all (it stopped)
+  // and an error it reports (such as the board not answering) give
+  // different messages.
   function api(path, opts = {}) {
     const sep = path.includes("?") ? "&" : "?";
     return fetch(`${path}${sep}t=${encodeURIComponent(token)}`, opts).then(async (r) => {
+      offline = false;
       const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error?.message || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(body.error?.message || `soft-agent answered HTTP ${r.status}.`);
       return body;
+    }, () => {
+      offline = true;
+      showStatus();
+      throw new Error("This page can't reach soft-agent, the program that serves it: it was stopped or closed. Start it again (scripts/debug-panel.sh), then reload this page.");
     });
   }
 
@@ -445,7 +475,7 @@
     refresh(!paused);
   }
 
-  // The Watch title's status: "live" while reads keep coming, "paused", or
+  // The panel's status: "Live" while reads keep coming, "Paused", or
   // how old the data is in coarse steps, so the text changes rarely. The
   // exact time of the last read is in its tooltip.
   function age(ms) {
@@ -460,18 +490,23 @@
   function showStatus() {
     const el = $("status");
     let text;
-    let live = false;
-    if (paused) text = "paused";
-    else if (lastRead === null) text = "reading…";
+    let kind = "";
+    if (offline) {
+      text = "soft-agent stopped";
+      kind = "offline";
+    } else if (paused) text = "Paused";
+    else if (lastRead === null) text = "Reading…";
     else {
       const ms = Date.now() - lastRead;
       // Late by three periods (at least 5 s): no longer live.
-      live = ms < Math.max(3 * Number($("rate").value), 5000);
-      text = live ? "live" : age(ms);
+      const live = ms < Math.max(3 * Number($("rate").value), 5000);
+      text = live ? "Live" : age(ms);
+      kind = live ? "live" : "stale";
     }
     if (el.textContent !== text) el.textContent = text;
-    el.classList.toggle("live", live);
-    el.dataset.tip = lastRead === null ? "Not read yet" : `Last read at ${new Date(lastRead).toLocaleTimeString()}`;
+    el.className = kind;
+    const last = lastRead === null ? "Not read yet" : `Last read at ${new Date(lastRead).toLocaleTimeString()}`;
+    el.dataset.tip = offline ? `The page can't reach soft-agent. ${last}.` : last;
   }
   setInterval(showStatus, 1000);
 
@@ -500,6 +535,16 @@
   }
 
   $("session").onchange = (e) => { session = e.target.value; built = ""; refresh(true); };
+  // Each section's folded state, remembered in this browser.
+  for (const id of ["section-drive", "section-watch"]) {
+    const el = $(id);
+    const key = `logix-debug-panel.${id}`;
+    try { if (localStorage.getItem(key) === "closed") el.open = false; } catch { /* open */ }
+    el.addEventListener("toggle", () => {
+      try { localStorage.setItem(key, el.open ? "open" : "closed"); } catch { /* not kept */ }
+    });
+  }
+
   $("pause").onclick = () => {
     paused = !paused;
     $("pause").textContent = paused ? "Resume" : "Pause";
