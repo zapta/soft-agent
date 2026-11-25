@@ -41,6 +41,8 @@
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   tr:last-child td { border-bottom: none; }
+  th + th, td + td { border-left: 1px solid var(--line); }
+  thead th { border-bottom: 1px solid var(--line); }
   th { font-weight: 500; color: var(--muted); font-size: 12px; }
   td.mono, .mono { font-family: var(--mono); }
   td.num { text-align: right; }
