@@ -27,8 +27,8 @@ pub struct DebugConfig {
     /// on the board's clock pin, whose frequency the catalog gives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock_mhz: Option<f64>,
-    /// How the debugger reaches the host. Omitted means the board's UART at
-    /// 115200 baud.
+    /// How the debugger reaches the host. Omitted or {} means the board's
+    /// UART at 115200 baud.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uplink: Option<Uplink>,
     /// Nets the debugger reads.
@@ -47,7 +47,8 @@ pub struct DebugConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Uplink {
-    /// The kind of link; only uart in version 1.
+    /// The kind of link: uart, the only one in version 1 and the default.
+    #[serde(default)]
     pub kind: UplinkKind,
     /// The FPGA pin the debugger transmits on. Defaults to the board's UART
     /// TX pin in the catalog.
@@ -62,9 +63,10 @@ pub struct Uplink {
     pub baud: Option<u32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum UplinkKind {
+    #[default]
     Uart,
 }
 
@@ -302,6 +304,14 @@ mod tests {
             let e = parse(text).unwrap_err();
             assert!(e.contains(why), "{text}: {e}");
         }
+    }
+
+    #[test]
+    fn an_empty_uplink_is_the_default() {
+        let c = parse(r#"{"clock":"c","uplink":{},"input":[{"net":"main.a"}]}"#).unwrap();
+        let u = c.uplink.unwrap();
+        assert_eq!(u.kind, UplinkKind::Uart);
+        assert!(u.tx.is_none() && u.baud.is_none());
     }
 
     #[test]

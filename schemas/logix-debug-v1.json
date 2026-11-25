@@ -24,7 +24,7 @@
       "format": "double"
     },
     "uplink": {
-      "description": "How the debugger reaches the host. Omitted means the board's UART at\n115200 baud.",
+      "description": "How the debugger reaches the host. Omitted or {} means the board's\nUART at 115200 baud.",
       "anyOf": [
         {
           "$ref": "#/$defs/Uplink"
@@ -61,8 +61,9 @@
       "type": "object",
       "properties": {
         "kind": {
-          "description": "The kind of link; only uart in version 1.",
-          "$ref": "#/$defs/UplinkKind"
+          "description": "The kind of link: uart, the only one in version 1 and the default.",
+          "$ref": "#/$defs/UplinkKind",
+          "default": "uart"
         },
         "tx": {
           "description": "The FPGA pin the debugger transmits on. Defaults to the board's UART\nTX pin in the catalog.",
@@ -88,10 +89,7 @@
           "minimum": 0
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "kind"
-      ]
+      "additionalProperties": false
     },
     "UplinkKind": {
       "type": "string",

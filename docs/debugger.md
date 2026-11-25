@@ -120,7 +120,8 @@ An example, for the iCESugar v1.5:
 {
   "$schema": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json",
   "clock": "sys_clk",
-  // tx and rx can be left out: they default to the board's UART
+  // Everything in uplink can be left out, as "uplink": {}: kind defaults
+  // to uart, tx and rx to the board's UART, baud to 115200.
   "uplink": { "kind": "uart", "tx": "6", "rx": "4", "baud": 115200 },
   "input": [
     { "net": "main.count", "name": "counter" },
@@ -144,7 +145,9 @@ An example, for the iCESugar v1.5:
 - `uplink.tx`, `uplink.rx`: the UART's pins. Each is optional and defaults to
   the board's UART in the catalog (the iCESugar v1.5's TX 6 and RX 4), so most
   files can leave them out; other pins are for a USB serial adapter on a
-  PMOD. `baud` defaults to 115200.
+  PMOD. `baud` defaults to 115200, and `kind` to `uart`, the only kind in
+  version 1. `"uplink": {}` takes every default; it says the same as leaving
+  `uplink` out, but shows a reader where the link is set.
 - `input` and `output`, from the debugger's side, as AMD's VIO names
   probe\_in and probe\_out: an input is a net it reads, an output a net it
   drives. `name` is the host's name for it (defaults to the net's path); widths
