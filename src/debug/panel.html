@@ -47,7 +47,7 @@
   th { font-weight: 500; color: var(--muted); font-size: 12px; }
   td.mono, .mono { font-family: var(--mono); }
   td.num { text-align: right; }
-  .net { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  td.name { cursor: help; }
   .bits { letter-spacing: .06em; }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
   .pill.on { color: var(--on); border-color: var(--on); }
@@ -97,7 +97,7 @@
     <h2>Drive</h2>
     <div class="card">
       <div class="scroll"><table id="drive">
-        <thead><tr><th>Name</th><th>Net</th><th class="num">Bits</th><th>Mode</th><th>State</th><th>Value</th></tr></thead>
+        <thead><tr><th>Name</th><th class="num">Bits</th><th>Mode</th><th>State</th><th>Value</th></tr></thead>
         <tbody></tbody>
       </table></div>
       <div class="empty" id="no-drive" hidden>This build drives no nets.</div>
@@ -107,7 +107,7 @@
     <h2>Watch <span class="meta" id="stamp"></span> <span class="paused-note" id="paused-note" hidden>Paused</span></h2>
     <div class="card">
       <div class="scroll"><table id="watch">
-        <thead><tr><th>Name</th><th>Net</th><th class="num">Bits</th><th class="num">Hex</th><th class="num">Decimal</th><th class="num">Binary</th></tr></thead>
+        <thead><tr><th>Name</th><th class="num">Bits</th><th class="num">Hex</th><th class="num">Decimal</th><th class="num">Binary</th></tr></thead>
         <tbody></tbody>
       </table></div>
       <div class="empty" id="no-watch" hidden>This build watches no nets.</div>
@@ -148,13 +148,20 @@
     return td;
   }
 
+  // The name, with the net's path as its hover text.
+  function nameCell(name, net) {
+    const td = cell(name, "name");
+    td.title = net;
+    return td;
+  }
+
   function build(info) {
     const ib = $("watch").tBodies[0], ob = $("drive").tBodies[0];
     ib.replaceChildren(); ob.replaceChildren();
     for (const i of info.watch) {
       const tr = document.createElement("tr");
       tr.dataset.name = i.name;
-      tr.append(cell(i.name), cell(i.net, "net"), cell(String(i.width), "num"),
+      tr.append(nameCell(i.name, i.net), cell(String(i.width), "num"),
         cell("", "mono num hex"), cell("", "mono num dec"), cell("", "mono num bits"));
       ib.append(tr);
     }
@@ -195,7 +202,7 @@
         box.append(r);
       }
       ctl.append(box);
-      tr.append(cell(o.name), cell(o.net, "net"), cell(String(o.width), "num"),
+      tr.append(nameCell(o.name, o.net), cell(String(o.width), "num"),
         cell(o.mode), state, ctl);
       ob.append(tr);
     }
