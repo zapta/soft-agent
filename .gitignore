@@ -12,3 +12,4 @@ rustc-ice-*.txt
 *.swo
 .DS_Store
 __pycache__/
+/.run.sh
