@@ -47,7 +47,13 @@
   th { font-weight: 500; color: var(--muted); font-size: 12px; }
   td.mono, .mono { font-family: var(--mono); }
   td.num { text-align: right; }
-  td.name { cursor: help; }
+  td.name { cursor: help; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+  #tip {
+    position: fixed; z-index: 10; pointer-events: none; display: none;
+    padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); font: 12px var(--mono);
+    box-shadow: 0 2px 8px rgb(0 0 0 / .15); white-space: nowrap;
+  }
   .bits { letter-spacing: .06em; }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
   .pill.on { color: var(--on); border-color: var(--on); }
@@ -151,9 +157,27 @@
   // The name, with the net's path as its hover text.
   function nameCell(name, net) {
     const td = cell(name, "name");
-    td.title = net;
+    td.dataset.net = net;
     return td;
   }
+
+  // The net's path, at once, next to the pointer (the browser's own title
+  // text comes late or not at all).
+  const tip = document.createElement("div");
+  tip.id = "tip";
+  document.body.append(tip);
+  document.addEventListener("mouseover", (e) => {
+    const td = e.target.closest?.("td.name");
+    if (!td) { tip.style.display = "none"; return; }
+    tip.textContent = td.dataset.net;
+    tip.style.display = "block";
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (tip.style.display !== "block") return;
+    const x = Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8);
+    tip.style.left = `${Math.max(8, x)}px`;
+    tip.style.top = `${e.clientY + 16}px`;
+  });
 
   function build(info) {
     const ib = $("watch").tBodies[0], ob = $("drive").tBodies[0];
