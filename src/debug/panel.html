@@ -158,10 +158,10 @@
   let lastRead = null;  // when the last read came back, in ms
   const $ = (id) => document.getElementById(id);
 
-  // True while the page can't reach the program serving it. Its name and
-  // how to start it again come from /api/about, asked at load.
+  // True while the page can't reach the program serving it, whose name
+  // comes from /api/about, asked at load.
   let offline = false;
-  let server = { name: "the server", restart: "Start it again, then reload this page." };
+  let server = { name: "the server" };
 
   // A request to the server. A failure to reach it at all (it stopped)
   // and an error it reports (such as the board not answering) give
@@ -176,7 +176,7 @@
     }, () => {
       offline = true;
       showStatus();
-      throw new Error(`This page can't reach ${server.name}, the program that serves it: it was stopped or closed. ${server.restart}`);
+      throw new Error(`Can't reach ${server.name}: it was stopped or closed.`);
     });
   }
 
