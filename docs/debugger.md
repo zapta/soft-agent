@@ -503,7 +503,8 @@ of a variable shift, and register the reply byte.
   themselves when the board is plugged back in. A board plugged back in has
   restarted with nothing overridden, so after its build ID checks out, the
   session releases every override and clears its copy of the written
-  values to match.
+  values to match. Tested on the iCESugar v1.5 on 2026-11-25: the panel resumed by
+  itself after the board was unplugged and plugged back in.
   `debug_read` reads watched nets only; to read a driven net, list it in `watch`
   as well.
 - **Limits:** a READ returns up to 128 bytes and a WRITE carries 6; the host
