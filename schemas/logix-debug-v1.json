@@ -120,7 +120,7 @@
           ]
         },
         "mode": {
-          "description": "override: the debugger can take over a net the design drives, and\nrelease it back. register: the debugger always drives it. Defaults\nto override.",
+          "description": "override: the debugger can take over a net the design drives, and\nrelease it back. control: only the debugger drives it, a net nothing\nin the design drives, such as a spare control input. Defaults\nto override.",
           "$ref": "#/$defs/DriveMode",
           "default": "override"
         }
@@ -145,7 +145,7 @@
       "type": "string",
       "enum": [
         "override",
-        "register"
+        "control"
       ]
     },
     "WatchNet": {

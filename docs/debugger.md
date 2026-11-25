@@ -190,7 +190,7 @@ bus = "main.u_ctrl.state"
   the panel, each row's Format menu changes it; a choice made there is
   remembered by name in that browser and wins over the file's.
 - `mode` of a drive entry: `override` (the debugger can take over a net the
-  design drives, and releases it back to the design) or `register` (a net
+  design drives, and releases it back to the design) or `control` (a net
   with no driver in the design, driven only by the debugger). See the next
   section.
 
@@ -222,7 +222,7 @@ override mux.
 
 Writes, by mode:
 
-- **register:** the debugger drives a net nothing else drives (a spare
+- **control:** the debugger drives a net nothing else drives (a spare
   control input). Simplest: no net is cut.
 - **override:** the debugger can take over a net the design drives, through a
   mux at that net's driver, released by default. With option A the build cuts
@@ -434,7 +434,7 @@ move unchanged; only where the code lives changes. To keep that easy:
 | Q1 | File format: JSON, JSONC, TOML or a `.pcf`-like text file? | TOML with a generated schema, as Logix IDE's project file; it was JSONC until 2026-11-25 |
 | Q2 | Where nets are chosen: the file, the design, or both? | The debug file only for now; marking in the design later |
 | Q3 | How the debugger gets in: a yosys pre-pass, soft-agent's own build, or an engine hook? | Yosys pre-pass now (no engine change); an engine hook when moving it |
-| Q4 | Writes: `register` only first, or `override` of driven nets too? | Both, if yosys `expose -cut` works as expected; else `register` first |
+| Q4 | Writes: `control` only first, or `override` of driven nets too? | Both, if yosys `expose -cut` works as expected; else `control` first (`control` was called `register` until 2026-11-25) |
 | Q5 | Debugger clock: always the board clock, or any net? | One clock for the UART and the debugger, the board's clock resource by default; every watched and driven net must be on it |
 | Q6 | The UART when the design uses it too? | Refuse in version 1; console channel later |
 | Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later |

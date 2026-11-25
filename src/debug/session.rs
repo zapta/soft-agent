@@ -498,7 +498,7 @@ impl EngineTool for DebugWrite {
     const NAME: &'static str = "debug_write";
     const DESCRIPTION: &'static str = "Drives a net of the running design through a debug \
         session: one of its drive names from debug_open. For an override one, writing takes the \
-        net over from the design until release; release gives it back. A register one is \
+        net over from the design until release; release gives it back. A control one is \
         always the debugger's. The value is a number, or a string in hex (0x..), binary (0b..) \
         or decimal, and must fit the net's width.";
     const READ_ONLY: bool = false;
@@ -559,7 +559,7 @@ pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
             }
             let Some(bit) = o.enable_bit else {
                 return Err(ToolError::request(format!(
-                    "{} is in register mode: the debugger always drives it, so it can't be released.",
+                    "{} is in control mode: only the debugger drives it, so it can't be released.",
                     o.name
                 )));
             };

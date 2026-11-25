@@ -171,7 +171,7 @@
   // A drive row's mode, with what it means as its tooltip.
   const MODE_TIPS = {
     override: "The design drives this net. Drive takes it over with your value; Release gives it back to the design.",
-    register: "Only the debugger drives this net: it holds the last value you drove, from 0 at start. There is nothing to release.",
+    control: "Only the debugger drives this net: it holds the last value you drove, from 0 at start. There is nothing to release.",
   };
   function modeCell(mode) {
     const td = cell(mode);
