@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Logix Debug Panel</title>
+<title>Logix Debug</title>
 <style>
   :root {
     --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66;
@@ -73,9 +73,8 @@
   button:disabled { opacity: .5; cursor: default; }
   .controls { display: flex; gap: 6px; align-items: center; }
   #pause { min-width: 6.5em; }
-  #status { color: var(--muted); font-size: 13px; font-weight: 400; }
+  #status { color: var(--muted); font-size: 13px; }
   #status.live { color: var(--on); }
-  h2 .meta { font-weight: 400; }
   #error {
     display: none; margin: 0; padding: 10px 14px; border-radius: 8px;
     background: var(--warn-bg); color: var(--warn); white-space: pre-wrap;
@@ -87,13 +86,13 @@
 </head>
 <body>
 <header>
-  <h1>Logix Debug Panel</h1>
-  <span class="meta">Session <select id="session"></select></span>
+  <h1>Logix Debug</h1>
+  <span id="status"></span>
+  <!-- Shown only when several debug sessions are open, such as two boards. -->
+  <span class="meta" id="session-box" hidden>Session <select id="session"></select></span>
   <span class="meta">Board <b id="board">–</b></span>
   <span class="meta">Port <b id="port">–</b></span>
-  <span class="meta">Build <b id="build">–</b></span>
   <span class="spacer"></span>
-  <button id="pause" title="Stop or restart the live updates">Pause</button>
   <!-- Not round periods: a design's own periods, such as a blinky's half
        second, would otherwise show the same phase at every read. -->
   <select id="rate" title="Refresh rate">
@@ -101,6 +100,7 @@
     <option value="973" selected>about 1 per second</option>
     <option value="4931">about every 5 s</option>
   </select>
+  <button id="pause" title="Stop or restart the live updates">Pause</button>
   <button id="refresh">Read now</button>
 </header>
 <main>
@@ -116,7 +116,7 @@
     </div>
   </section>
   <section>
-    <h2>Watch <span id="status"></span></h2>
+    <h2>Watch</h2>
     <div class="card">
       <div class="scroll"><table id="watch">
         <thead><tr><th>Name</th><th class="num">Bits</th><th class="center">Format</th><th class="num">Value</th></tr></thead>
@@ -358,7 +358,6 @@
     if (key !== built) { build(info); built = key; }
     $("board").textContent = info.board;
     $("port").textContent = info.port;
-    $("build").textContent = info.build_id;
     for (const v of state.values) {
       const tr = $("watch").querySelector(`tr[data-name="${CSS.escape(v.name)}"]`);
       if (!tr) continue;
@@ -453,6 +452,7 @@
       }
       if (!sessions.includes(session)) session = sessions[0] || "";
       sel.value = session;
+      $("session-box").hidden = sessions.length < 2;
       if (!session) showError(new Error("No debug session is open. Open one with debug_open, then reload."));
     } catch (e) {
       showError(e);
