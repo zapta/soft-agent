@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Opens the debug panel for a debug build on the board, from the shell:
 #
-#   scripts/debug-panel.sh ~/work-logix/_build_debug [--port PORT] [--no-open]
+#   scripts/debug-panel.sh ~/my-design/_build_debug [--port PORT] [--no-open]
 #
 # Builds soft-agent if needed, opens a debug session and the panel in the
 # browser, and waits: Enter or Ctrl-C closes the session, which releases

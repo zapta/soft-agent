@@ -19,7 +19,7 @@ import sys
 
 def main():
     ap = argparse.ArgumentParser(description="Open the soft-agent debug panel.")
-    ap.add_argument("build_folder", help="the debug build's folder, such as ~/work-logix/_build_debug")
+    ap.add_argument("build_folder", help="the debug build's folder, such as ~/my-design/_build_debug")
     ap.add_argument("--port", help="the board's serial port; found by list_devices when left out")
     ap.add_argument("--no-open", action="store_true", help="print the panel's address without opening it")
     ap.add_argument("--server", required=True, help="the soft-agent binary (debug-panel.sh passes it)")

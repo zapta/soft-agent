@@ -59,7 +59,7 @@ For a debug build that is programmed on the board (`debug_build`, then
 `program_board`):
 
 ```sh
-scripts/debug-panel.sh ~/work-logix/_build_debug
+scripts/debug-panel.sh ~/my-design/_build_debug
 ```
 
 It builds soft-agent if needed, opens a debug session and the panel in the
