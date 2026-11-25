@@ -312,8 +312,7 @@
   // exact time of the last read is in its tooltip.
   function age(ms) {
     const s = Math.floor(ms / 1000);
-    if (s < 10) return "seconds ago";
-    if (s < 30) return `${Math.floor(s / 10) * 10} s ago`;
+    if (s < 30) return `${Math.max(5, Math.floor(s / 5) * 5)} s ago`;
     if (s < 60) return "30 s ago";
     const m = Math.floor(s / 60);
     if (m < 60) return `${m} min ago`;
@@ -328,8 +327,8 @@
     else if (lastRead === null) text = "reading…";
     else {
       const ms = Date.now() - lastRead;
-      // Late by three periods (at least 3 s): no longer live.
-      live = ms < Math.max(3 * Number($("rate").value), 3000);
+      // Late by three periods (at least 5 s): no longer live.
+      live = ms < Math.max(3 * Number($("rate").value), 5000);
       text = live ? "live" : age(ms);
     }
     if (el.textContent !== text) el.textContent = text;

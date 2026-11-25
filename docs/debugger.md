@@ -497,6 +497,13 @@ of a variable shift, and register the reply byte.
   first (one INFO frame, about a millisecond), and refuses when the board
   was programmed with another build after `debug_open`, since the session's
   map would no longer fit.
+- **Reconnecting:** a link error (no reply, or the port gone, such as with
+  the board unplugged) closes the session's port, and the next read or
+  write opens it again, so a session, and the panel polling it, resume by
+  themselves when the board is plugged back in. A board plugged back in has
+  restarted with nothing overridden, so after its build ID checks out, the
+  session releases every override and clears its copy of the written
+  values to match.
   `debug_read` reads watched nets only; to read a driven net, list it in `watch`
   as well.
 - **Limits:** a READ returns up to 128 bytes and a WRITE carries 6; the host

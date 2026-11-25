@@ -22,8 +22,13 @@ use super::protocol::{self, DebugMap};
 const REPLY_TIMEOUT: Duration = Duration::from_millis(1000);
 
 struct Session {
-    port: Box<dyn serialport::SerialPort>,
+    /// The open port; None after the link broke, such as with the board
+    /// unplugged, until the next read or write opens it again.
+    port: Option<Box<dyn serialport::SerialPort>>,
     port_name: String,
+    /// Set when the port was opened again: the board may have restarted,
+    /// so once its build is checked, everything is released to match.
+    reconnected: bool,
     map: DebugMap,
     /// What the host last wrote: the write registers and the override
     /// enables, which the debugger can't be asked for.
@@ -50,21 +55,54 @@ fn with_session<T>(
 }
 
 /// Sends a frame and returns the reply's payload, checking its status.
+/// Opens the port again first when the link broke; a link error drops the
+/// port, so the next call tries again (the board unplugged and back).
 fn transact(s: &mut Session, command: u8, payload: &[u8]) -> Result<Vec<u8>, ToolError> {
+    if s.port.is_none() {
+        let port = serialport::new(&s.port_name, s.map.baud)
+            .timeout(Duration::from_millis(20))
+            .open()
+            .map_err(|e| {
+                ToolError::setup(format!(
+                    "The board on {} isn't there ({e}). Plug it back in: the session reconnects at the next read or write.",
+                    s.port_name
+                ))
+            })?;
+        s.port = Some(port);
+        // A board plugged back in has restarted, with nothing overridden.
+        s.wr = vec![0; s.map.write_bytes];
+        s.en = vec![0; s.map.enable_bytes];
+        s.reconnected = true;
+        log::info!("Debug session reopened {}", s.port_name);
+    }
+    let result = exchange(s, command, payload);
+    if let Err(e) = &result
+        && e.category == Category::Setup
+    {
+        s.port = None;
+    }
+    result
+}
+
+/// One frame and its reply, on the open port.
+fn exchange(s: &mut Session, command: u8, payload: &[u8]) -> Result<Vec<u8>, ToolError> {
+    let name = s.port_name.clone();
+    let Some(port) = s.port.as_mut() else {
+        return Err(ToolError::engine("The debug session has no open port."));
+    };
     let link = |e: String| {
         ToolError::new(
             Category::Setup,
-            format!("The debugger on {} didn't answer: {e}", s.port_name),
+            format!("The debugger on {name} didn't answer: {e}"),
         )
         .with_details(
             "Check that the board runs this debug build (program_board), and that no other \
              program, such as a serial session, uses the port.",
         )
     };
-    let _ = s.port.clear(serialport::ClearBuffer::Input);
-    s.port
-        .write_all(&protocol::frame(command, payload))
-        .and_then(|_| s.port.flush())
+    let _ = port.clear(serialport::ClearBuffer::Input);
+    port.write_all(&protocol::frame(command, payload))
+        .and_then(|_| port.flush())
         .map_err(|e| link(e.to_string()))?;
     let deadline = Instant::now() + REPLY_TIMEOUT;
     let mut buf = Vec::new();
@@ -94,7 +132,7 @@ fn transact(s: &mut Session, command: u8, payload: &[u8]) -> Result<Vec<u8>, Too
             }
             None => {}
         }
-        match s.port.read(&mut chunk) {
+        match port.read(&mut chunk) {
             Ok(n) => buf.extend_from_slice(&chunk[..n]),
             Err(e) if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::Interrupted => {}
             Err(e) => return Err(link(e.to_string())),
@@ -155,7 +193,13 @@ fn board_build(s: &mut Session) -> Result<Result<String, String>, ToolError> {
 /// another build since debug_open, and the map would then be wrong.
 fn same_build(s: &mut Session) -> Result<(), ToolError> {
     match board_build(s)? {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            if s.reconnected {
+                s.reconnected = false;
+                reset(s)?;
+            }
+            Ok(())
+        }
         Err(board_id) => Err(ToolError::new(
             Category::Setup,
             format!(
@@ -263,7 +307,8 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
             )
         })?;
     let mut s = Session {
-        port,
+        port: Some(port),
+        reconnected: false,
         port_name: input.port.clone(),
         wr: vec![0; map.write_bytes],
         en: vec![0; map.enable_bytes],
