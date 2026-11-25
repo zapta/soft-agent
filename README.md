@@ -53,6 +53,20 @@ To have soft-agent in every Claude Code session instead:
 claude mcp add --scope user soft-agent -- "$PWD/scripts/serve.sh"
 ```
 
+## Debug panel from the shell
+
+For a debug build that is programmed on the board (`debug_build`, then
+`program_board`):
+
+```sh
+scripts/debug-panel.sh ~/work-logix/_build_debug
+```
+
+It builds soft-agent if needed, opens a debug session and the panel in the
+browser, and waits: Enter or Ctrl-C closes the session, releasing every
+override. It finds the connected board's serial port; give `--port` when
+there are several.
+
 ## Engine version
 
 `Cargo.toml` follows the engine's `main` branch; `Cargo.lock` records the
