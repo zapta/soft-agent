@@ -160,9 +160,9 @@ pub struct MapDrive {
     pub width: usize,
     /// Its first bit in the write space.
     pub offset: usize,
-    /// override or control.
+    /// override or source.
     pub mode: String,
-    /// Its bit in the override enables; none for control mode, which is
+    /// Its bit in the override enables; none for source mode, which is
     /// always on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_bit: Option<usize>,
