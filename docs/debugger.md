@@ -100,9 +100,9 @@ support it.
 
 ## The debug configuration file
 
-One JSONC (JSON with comments) file per debug build, named in the build
-request like the constraint file (such as `debug.jsonc`), with a schema
-generated from Rust types as the engine does for its tools. It says which nets
+One TOML file per debug build, named in the build request like the
+constraint file (such as `debug.toml`), with a schema generated from Rust
+types as the engine does for its tools. It says which nets
 the debugger sees, how it reaches the host, and which clock it runs on.
 
 Format options considered:
@@ -110,33 +110,47 @@ Format options considered:
 | Option | For | Against |
 | --- | --- | --- |
 | JSON with a generated schema | Same as the engine's tools and catalog; editors validate it; easy for any host to write | No comments; verbose for long lists |
-| JSONC (JSON with comments), chosen | Comments for people; the engine already reads JSONC remote configs | Fewer editors validate it out of the box |
-| TOML | Short and readable for flat lists | Nested probe groups are awkward; a second format in the project |
+| JSONC (JSON with comments), the first choice | Comments for people; the engine already reads JSONC remote configs | Fewer editors validate it out of the box; Verilog snippets would be one-line strings |
+| TOML, chosen | Comments; the same format as Logix IDE's project file (`logix-ide.toml`); multi-line literal strings (`'''…'''`) hold Verilog snippets as written; good parsers in Rust (`toml`), Python (`tomllib`, built in) and JavaScript | Deep nesting is awkward, which this file doesn't need |
+| YAML | Short; block strings for snippets | Guesses types (`tx: 6` a number, `no` false, `08` octal in YAML 1.1); indentation changes meaning silently; Rust's `serde_yaml` is archived |
 | A constraint-style text file (like `.pcf`, one line per net) | Very short; familiar to FPGA users | A new grammar to parse and document; hard to extend |
 
 An example, for the iCESugar v1.5:
 
-```jsonc
-{
-  "$schema": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json",
-  "clock": "sys_clk",
-  // The board's UART, by its resource name in the catalog (TX 6, RX 4).
-  "uplink": { "kind": "uart", "resource": "uart", "baud": 115200 },
-  "drive": [
-    { "net": "main.blink", "name": "blink_force", "mode": "override" }
-  ],
-  "watch": [
-    { "bus": "main.count", "name": "counter" },
-    { "net": "main.blink", "name": "blink" },
-    { "bus": "main.u_ctrl.state" }
-  ]
-}
+```toml
+#:schema https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json
+clock = "sys_clk"
+
+# The board's UART, by its resource name in the catalog (TX 6, RX 4).
+uplink = { kind = "uart", resource = "uart", baud = 115200 }
+
+[[drive]]
+name = "blink_force"
+net = "main.blink"
+mode = "override"
+
+[[watch]]
+name = "counter"
+bus = "main.count"
+
+[[watch]]
+name = "blink"
+net = "main.blink"
+
+[[watch]]
+bus = "main.u_ctrl.state"
 ```
 
-- `$schema`: optional, as in the catalog's board files: editors check and
-  complete the file, and the build refuses any other value. The version lives
-  in the address (`-v1`; a breaking change gets `-v2`), so there is no
-  separate `version` field. The schema lives in this repo, under `schemas/`.
+- `#:schema`: an optional first line naming the schema, for editors
+  (Taplo, the "Even Better TOML" extension), which then check and complete
+  the file. It is a comment to TOML, so the build doesn't read it. The
+  version lives in the address (`-v1`; a breaking change gets `-v2`), so
+  there is no separate `version` field. The schema lives in this repo,
+  under `schemas/`.
+- Entries are written as blocks, `[[drive]]` and `[[watch]]`, one key per
+  line, in the order they apply. TOML also accepts one-line entries
+  (`watch = [{ net = "main.blink" }]`), but a one-line entry can't hold a
+  multi-line Verilog snippet, so files and examples use blocks.
 - `clock`: the one clock the debugger and its UART run on, a top-level port of
   the design; every watched and driven net must be on it. Its frequency comes
   from the board's clock resource when it is that pin, else from
@@ -412,7 +426,7 @@ move unchanged; only where the code lives changes. To keep that easy:
 
 | # | Question | Decided |
 | --- | --- | --- |
-| Q1 | File format: JSON, JSONC, TOML or a `.pcf`-like text file? | JSONC with a generated schema |
+| Q1 | File format: JSON, JSONC, TOML or a `.pcf`-like text file? | TOML with a generated schema, as Logix IDE's project file; it was JSONC until 2026-11-25 |
 | Q2 | Where nets are chosen: the file, the design, or both? | The debug file only for now; marking in the design later |
 | Q3 | How the debugger gets in: a yosys pre-pass, soft-agent's own build, or an engine hook? | Yosys pre-pass now (no engine change); an engine hook when moving it |
 | Q4 | Writes: `register` only first, or `override` of driven nets too? | Both, if yosys `expose -cut` works as expected; else `register` first |
@@ -430,7 +444,7 @@ submodule (`u_counter`), on 2026-11-24:
 
 - [x] Read three nets (`main.u_counter.count`, `main.u_counter.tick`,
   `main.blink`) named in
-  a `debug.jsonc`. Two reads 0.26 s apart saw `count` advance 3.12 million
+  a `debug.jsonc` (now `debug.toml`). Two reads 0.26 s apart saw `count` advance 3.12 million
   cycles, as a 12 MHz clock does.
 - [x] Write one net in `override` mode, then release it: the writes and the
   release succeed. Seeing the LED follow the host still needs a person

@@ -1,11 +1,13 @@
 //! The debug configuration file (docs/debugger.md, The debug configuration
-//! file): JSONC, checked against the types below, whose schema is
-//! schemas/logix-debug-v1.json.
+//! file): TOML, checked against the types below, whose schema is
+//! schemas/logix-debug-v1.json. Editors find the schema from a first line
+//! `#:schema <SCHEMA_URL>` (Taplo, Even Better TOML).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// The only `$schema` value a debug file may have.
+/// The schema's address, for a debug file's `#:schema` line.
+#[cfg_attr(not(test), allow(dead_code))]
 pub const SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json";
 
@@ -15,10 +17,6 @@ pub const SCHEMA_URL: &str =
 #[serde(deny_unknown_fields)]
 #[schemars(title = "Logix debug configuration, version 1")]
 pub struct DebugConfig {
-    /// This schema's address, for editors. Optional; any other value is
-    /// refused.
-    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
-    pub schema: Option<String>,
     /// The clock the debugger and its UART run on: a top-level input port of
     /// the design, such as sys_clk. Every watched and driven net must be on
     /// it.
@@ -40,7 +38,7 @@ pub struct DebugConfig {
     /// Reserved for the capture phase; refused in version 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(skip)]
-    pub capture: Option<serde_json::Value>,
+    pub capture: Option<toml::Value>,
 }
 
 /// The link to the host: give resource, or tx and rx.
@@ -75,6 +73,9 @@ pub enum UplinkKind {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WatchNet {
+    /// The host's name for it. Defaults to the net's path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// A one-bit net, by its instance path from the top module, starting
     /// with the top module's name, such as main.u_ctrl.busy, or main.blink
     /// for a net in the top module itself. Give net or bus.
@@ -87,9 +88,6 @@ pub struct WatchNet {
     /// Give net or bus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus: Option<Bus>,
-    /// The host's name for it. Defaults to the net's path.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
     /// The paths it reads, most significant first: the net, or the list's
     /// members. Set by parse.
     #[serde(skip)]
@@ -131,6 +129,9 @@ pub enum Bus {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DriveNet {
+    /// The host's name for it. Defaults to the net's path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// A one-bit net, named as for watch. Give net or bus.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub net: String,
@@ -139,9 +140,6 @@ pub struct DriveNet {
     /// Give net or bus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus: Option<Bus>,
-    /// The host's name for it. Defaults to the net's path.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
     /// The paths it drives, most significant first. Set by parse.
     #[serde(skip)]
     #[schemars(skip)]
@@ -172,8 +170,19 @@ impl DriveMode {
 
 /// Parses a debug file's text, and checks what its types can't.
 pub fn parse(text: &str) -> Result<DebugConfig, String> {
-    let json = strip_comments(text);
-    let mut config: DebugConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let mut config: DebugConfig = toml::from_str(text).map_err(|e| {
+        // One line, with the place: toml's own text adds an excerpt.
+        let message = e.message().trim_end_matches('.').to_string();
+        match e.span() {
+            Some(span) => {
+                let before = &text[..span.start.min(text.len())];
+                let line = before.matches('\n').count() + 1;
+                let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+                format!("{message} (at line {line}, column {column}).")
+            }
+            None => format!("{message}."),
+        }
+    })?;
     // net or bus: after this, net holds the path either way (for a list,
     // the list as text), parts the paths, and bus stays set for a bus.
     for i in &mut config.watch {
@@ -181,11 +190,6 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
     }
     for o in &mut config.drive {
         o.parts = parts(&mut o.net, &o.bus, &o.name, "drive")?;
-    }
-    if let Some(s) = &config.schema
-        && s != SCHEMA_URL
-    {
-        return Err(format!("$schema must be {SCHEMA_URL:?}, or left out."));
     }
     if config.capture.is_some() {
         return Err("capture isn't supported yet: it comes in a later version.".into());
@@ -320,56 +324,6 @@ fn check_net(net: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// JSONC to JSON: removes // and /* */ comments outside strings, keeping
-/// line breaks so serde's line numbers stay right.
-pub fn strip_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    let mut in_string = false;
-    while let Some(c) = chars.next() {
-        if in_string {
-            out.push(c);
-            if c == '\\' {
-                if let Some(n) = chars.next() {
-                    out.push(n);
-                }
-            } else if c == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match (c, chars.peek()) {
-            ('"', _) => {
-                in_string = true;
-                out.push(c);
-            }
-            ('/', Some('/')) => {
-                for n in chars.by_ref() {
-                    if n == '\n' {
-                        out.push('\n');
-                        break;
-                    }
-                }
-            }
-            ('/', Some('*')) => {
-                chars.next();
-                let mut prev = ' ';
-                for n in chars.by_ref() {
-                    if n == '\n' {
-                        out.push('\n');
-                    }
-                    if prev == '*' && n == '/' {
-                        break;
-                    }
-                    prev = n;
-                }
-            }
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
 /// The schema of the file, as written to schemas/logix-debug-v1.json (by the
 /// schema_file_is_current test).
 #[cfg(test)]
@@ -382,25 +336,49 @@ pub fn schema_json() -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// For tests: a debug file written as JSON, converted to TOML and parsed.
+    pub fn parse_json(json: &str) -> Result<DebugConfig, String> {
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        parse(&toml::to_string(&value).map_err(|e| e.to_string())?)
+    }
 
     #[test]
     fn parses_the_spec_example() {
         let c = parse(
-            r#"{
-              "$schema": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json",
-              "clock": "sys_clk",
-              "uplink": { "kind": "uart", "resource": "uart", "baud": 115200 },
-              "watch": [ { "net": "count", "name": "counter" }, { "net": "blink" },
-                         { "net": "u_ctrl.state" }, { "net": "gen_lane[2].u_lane.err" } ],
-              /* a block comment */
-              "drive": [ { "net": "blink", "name": "blink_force", "mode": "override" } ]
-            }"#,
+            r#"#:schema https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json
+clock = "sys_clk"
+uplink = { kind = "uart", resource = "uart", baud = 115200 }  # a comment
+
+[[drive]]
+net = "main.blink"
+name = "blink_force"
+mode = "override"
+
+[[watch]]
+bus = "main.count"
+name = "counter"
+
+[[watch]]
+net = "main.gen_lane[2].u_lane.err"
+
+[[watch]]
+bus = ["pin.21", "pin.20"]
+name = "two_pins"
+"#,
         )
         .unwrap();
-        assert_eq!(c.watch.len(), 4);
+        assert_eq!(c.watch.len(), 3);
+        assert_eq!(c.watch[2].parts, vec!["pin.21", "pin.20"]);
         assert_eq!(c.drive[0].mode, DriveMode::Override);
+    }
+
+    #[test]
+    fn syntax_errors_name_the_line() {
+        let e = parse("clock = \"c\"\nuplink = {\n").unwrap_err();
+        assert!(e.contains("line 2"), "{e}");
     }
 
     #[test]
@@ -427,15 +405,11 @@ mod tests {
                 "twice",
             ),
             (
-                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"a"}],"$schema":"x"}"#,
-                "$schema",
-            ),
-            (
                 r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"a"}],"extra":1}"#,
                 "unknown field",
             ),
         ] {
-            let e = parse(text).unwrap_err();
+            let e = parse_json(text).unwrap_err();
             assert!(e.contains(why), "{text}: {e}");
         }
     }
@@ -443,7 +417,7 @@ mod tests {
     #[test]
     fn uplinks_name_a_resource_or_pins() {
         let up = |u: &str| {
-            parse(&format!(
+            parse_json(&format!(
                 r#"{{"clock":"c","uplink":{u},"watch":[{{"net":"main.a"}}]}}"#
             ))
         };
@@ -467,7 +441,7 @@ mod tests {
     #[test]
     fn net_or_bus() {
         let p = |e: &str| {
-            parse(&format!(
+            parse_json(&format!(
                 r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"watch":[{e}]}}"#
             ))
         };
@@ -487,7 +461,7 @@ mod tests {
     #[test]
     fn bus_lists() {
         let p = |io: &str, e: &str| {
-            parse(&format!(
+            parse_json(&format!(
                 r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"{io}":[{e}]}}"#
             ))
         };
@@ -512,11 +486,6 @@ mod tests {
             let err = p(io, e).unwrap_err();
             assert!(err.contains(why), "{e}: {err}");
         }
-    }
-
-    #[test]
-    fn comments_in_strings_stay() {
-        assert_eq!(strip_comments(r#"{"a":"//x"} // c"#), r#"{"a":"//x"} "#);
     }
 
     /// schemas/logix-debug-v1.json is the types' schema. To update it:

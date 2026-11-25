@@ -4,13 +4,6 @@
   "description": "A debug configuration file: which nets the debugger reads and drives, how\nit reaches the host and which clock it runs on.",
   "type": "object",
   "properties": {
-    "$schema": {
-      "description": "This schema's address, for editors. Optional; any other value is\nrefused.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "clock": {
       "description": "The clock the debugger and its UART run on: a top-level input port of\nthe design, such as sys_clk. Every watched and driven net must be on\nit.",
       "type": "string"
@@ -104,6 +97,13 @@
       "description": "A net the debugger drives.",
       "type": "object",
       "properties": {
+        "name": {
+          "description": "The host's name for it. Defaults to the net's path.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "net": {
           "description": "A one-bit net, named as for watch. Give net or bus.",
           "type": "string"
@@ -117,13 +117,6 @@
             {
               "type": "null"
             }
-          ]
-        },
-        "name": {
-          "description": "The host's name for it. Defaults to the net's path.",
-          "type": [
-            "string",
-            "null"
           ]
         },
         "mode": {
@@ -159,6 +152,13 @@
       "description": "A net the debugger reads.",
       "type": "object",
       "properties": {
+        "name": {
+          "description": "The host's name for it. Defaults to the net's path.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "net": {
           "description": "A one-bit net, by its instance path from the top module, starting\nwith the top module's name, such as main.u_ctrl.busy, or main.blink\nfor a net in the top module itself. Give net or bus.",
           "type": "string"
@@ -172,13 +172,6 @@
             {
               "type": "null"
             }
-          ]
-        },
-        "name": {
-          "description": "The host's name for it. Defaults to the net's path.",
-          "type": [
-            "string",
-            "null"
           ]
         }
       },

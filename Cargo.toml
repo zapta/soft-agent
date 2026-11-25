@@ -27,6 +27,7 @@ regex = "1"
 serialport = { version = "4.10", default-features = false }
 sha2 = "0.11"
 tokio-util = "0.7"
+toml = "0.9"
 
 [profile.release]
 strip = true

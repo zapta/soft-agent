@@ -46,7 +46,7 @@ impl EngineTool for DebugBuild {
     const NAME: &'static str = "debug_build";
     const DESCRIPTION: &'static str = "Builds an FPGA design with the Logix debugger in it, so a \
         host can read and drive the design's nets on the board while it runs (debug_open, \
-        debug_read, debug_write). Takes the same fields as build, plus debug_file: a JSONC \
+        debug_read, debug_write). Takes the same fields as build, plus debug_file: a TOML \
         file in the source folder naming the nets to watch (read) and drive, by \
         instance path such as main.u_ctrl.state, and the clock the debugger runs on. The debugger \
         talks over the board's UART, so the design must not use the UART pins. The design's \
@@ -81,7 +81,7 @@ pub struct DebugBuildInput {
     /// The constraint file (.pcf), relative to the source folder.
     pub constraint_file: String,
     /// The debug configuration file, relative to the source folder, such as
-    /// debug.jsonc.
+    /// debug.toml.
     pub debug_file: String,
     /// Where the build writes its files, as an absolute path; as for build.
     /// Use a folder of its own, such as _build_debug, so the normal build
@@ -1106,10 +1106,10 @@ fn write(path: &Path, text: &str) -> Result<(), ToolError> {
 /// A problem in the debug file, as a design error on that file.
 fn file_error(file: &str, message: &str) -> ToolError {
     let line = message
-        .split(" at line ")
+        .split("at line ")
         .nth(1)
         .and_then(|r| r.split_whitespace().next())
-        .and_then(|n| n.parse::<u32>().ok());
+        .and_then(|n| n.trim_end_matches(',').parse::<u32>().ok());
     let mut err = ToolError::new(Category::Design, format!("{file}: {message}"));
     err.diagnostics = vec![diagnostic(file, line.unwrap_or(1), message)];
     err
@@ -1140,7 +1140,7 @@ mod tests {
 
     #[test]
     fn paths_start_with_the_top() {
-        let c = config::parse(
+        let c = config::tests::parse_json(
             r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"main.u.count"},{"net":"main.blink","name":"b"}]}"#,
         )
         .unwrap();
@@ -1150,7 +1150,7 @@ mod tests {
         assert_eq!(c.watch[1].name.as_deref(), Some("b"));
         for bad in ["u.count", "mainx.count", "main"] {
             let c =
-                config::parse(&format!(r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"watch":[{{"net":"{bad}"}}]}}"#)).unwrap();
+                config::tests::parse_json(&format!(r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"watch":[{{"net":"{bad}"}}]}}"#)).unwrap();
             assert!(
                 in_top(c, "main").unwrap_err().contains("must start"),
                 "{bad}"
@@ -1160,7 +1160,7 @@ mod tests {
 
     #[test]
     fn pins_read_the_port_placed_there() {
-        let c = config::parse(
+        let c = config::tests::parse_json(
             r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"pin.18"},{"net":"pin.19"}]}"#,
         )
         .unwrap();
@@ -1173,6 +1173,13 @@ mod tests {
         let none = pcf_pins("set_io key 20\n");
         assert!(pin_ports(&c, &none, "p.pcf").is_err());
         assert!(in_top(c.clone(), "pin").is_err());
+    }
+
+    #[test]
+    fn debug_file_errors_carry_their_line() {
+        let e = config::parse("clock = \"c\"\nuplink = { kind = \"uart\"\n").unwrap_err();
+        let err = file_error("debug.toml", &e);
+        assert_eq!(err.diagnostics[0].line, Some(2), "{e}");
     }
 
     #[test]
