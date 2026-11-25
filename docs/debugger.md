@@ -223,7 +223,24 @@ override mux.
 Writes, by mode:
 
 - **source:** the debugger drives a net nothing else drives (a spare
-  control input). Simplest: no net is cut.
+  control input), starting at 0; there is nothing to release. The net must
+  have no driver in the debug build. A net set to a constant
+  (`wire white = 1'b0;`) doesn't work: yosys replaces it with its value
+  while reading the file, so nothing would use the net, and the build
+  refuses it with an error saying so. Instead, debug builds define
+  `LOGIX_DEBUG`, so a design can leave the net undriven there and give it a
+  default elsewhere:
+
+  ```verilog
+  `ifdef LOGIX_DEBUG
+    wire white;          // the debugger drives it (mode = "source")
+  `else
+    wire white = 1'b0;   // normal builds
+  `endif
+  ```
+
+  Tested on the iCESugar v1.5 on 2026-11-25: `white` lights all three LED
+  colors.
 - **override:** the debugger can take over a net the design drives, through a
   mux at that net's driver, released by default. With option A the build cuts
   the net and inserts the mux itself, a netlist edit (Build integration).
@@ -480,6 +497,11 @@ of a variable shift, and register the reply byte.
   file), `protocol.rs` (frames and the debug map), `build.rs`
   (`debug_build`), `session.rs` (the session tools), and `hdl/` (the
   debugger's Verilog and its testbench).
+- **Defines:** the pre-pass reads the sources with `SYNTHESIZE`, as the
+  engine's build does, and `LOGIX_DEBUG`, which only debug builds define.
+- **Driven nets must be used:** after the cut, a driven net's loads must
+  still read it (a cell or a top-level port); otherwise driving it would
+  change nothing, and the build refuses it.
 - **Aliases:** the pre-pass runs `opt_clean` after `flatten`, so a net
   that is only an alias (`wire red_on = ~sw_n[0];`) is driven by its cell
   directly. Without it, `expose -cut` connected such a net to its own cut

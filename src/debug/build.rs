@@ -630,6 +630,9 @@ async fn prepass(
         "-p".into(),
         script.into(),
         "-DSYNTHESIZE".into(),
+        // Lets a design differ in debug builds, such as a source net with
+        // no driver there and a default in normal builds.
+        "-DLOGIX_DEBUG".into(),
     ];
     if !input.verbose {
         args.insert(0, "-q".into());
@@ -701,6 +704,21 @@ async fn prepass(
         let bits = |name: &str| module["ports"][name]["bits"].clone();
         let cut_ok = mode.is_none()
             || (port(&format!("{net}.i")).is_some() && bits(net) != bits(&format!("{net}.i")));
+        // A driven net must still reach something: yosys replaces a net set
+        // to a constant with its value while reading, and the debugger would
+        // then drive nothing.
+        if mode.is_some()
+            && cut_ok
+            && !used(module, &bits(&format!("{net}.i")), &format!("{net}.i"))
+        {
+            return Err(ToolError::new(
+                Category::Design,
+                format!(
+                    "Nothing in the design uses {}.{net} once yosys has read it, so driving it would change nothing. A net set to a constant, such as `wire {net} = 1'b0;`, is replaced by its value while reading. For a source net, give it no driver in debug builds: `ifdef LOGIX_DEBUG, which debug_build defines.",
+                    input.top_module
+                ),
+            ));
+        }
         match found {
             Some(p) if cut_ok => {
                 widths.insert(net.clone(), p.width);
@@ -721,6 +739,29 @@ async fn prepass(
         widths,
         pin_ports: BTreeMap::new(),
     })
+}
+
+/// True when a cell, or a port other than `own`, reads any of `bits`.
+fn used(module: &Value, bits: &Value, own: &str) -> bool {
+    let Some(bits) = bits.as_array() else {
+        return false;
+    };
+    let wanted: Vec<&Value> = bits.iter().filter(|b| b.is_number()).collect();
+    let hit = |v: &Value| {
+        v.as_array()
+            .is_some_and(|list| list.iter().any(|b| wanted.contains(&b)))
+    };
+    let in_cells = module["cells"].as_object().is_some_and(|cells| {
+        cells.values().any(|c| {
+            c["connections"]
+                .as_object()
+                .is_some_and(|conns| conns.values().any(hit))
+        })
+    });
+    let in_ports = module["ports"]
+        .as_object()
+        .is_some_and(|ports| ports.iter().any(|(n, p)| n != own && hit(&p["bits"])));
+    in_cells || in_ports
 }
 
 /// The pre-pass's failure, in the user's terms.
