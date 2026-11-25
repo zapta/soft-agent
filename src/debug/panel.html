@@ -67,6 +67,7 @@
     background: var(--panel); color: var(--text); padding: 4px 10px;
   }
   input[type=text] { font-family: var(--mono); width: 9em; }
+  input[type=text].invalid { border-color: var(--warn); background: var(--warn-bg); outline-color: var(--warn); }
   button { cursor: pointer; }
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
@@ -232,6 +233,28 @@
     return (fmt === "hex" ? "0x" : "0b") + t;
   }
   const PLACEHOLDERS = { hex: "hex", dec: "decimal", bin: "binary" };
+  const VALUE_TIP = "A value in the row's format, or with a 0x or 0b prefix";
+  const BASE_NAMES = { hex: "hex", dec: "decimal", bin: "binary" };
+
+  // Why a typed value can't be driven on a net of `width` bits, or null.
+  // An empty box is an error only when `onDrive`.
+  function valueError(text, fmt, width, onDrive) {
+    const t = text.trim().replace(/_/g, "");
+    if (!t) return onDrive ? "Enter a value first." : null;
+    let base = fmt;
+    let digits = t;
+    if (/^0x/i.test(t)) { base = "hex"; digits = t.slice(2); }
+    else if (/^0b/i.test(t)) { base = "bin"; digits = t.slice(2); }
+    const ok = { hex: /^[0-9a-f]+$/i, dec: /^[0-9]+$/, bin: /^[01]+$/ }[base];
+    if (!ok.test(digits)) return `Not a ${BASE_NAMES[base]} number.`;
+    const prefix = base === "hex" ? "0x" : base === "bin" ? "0b" : "";
+    const max = (1n << BigInt(width)) - 1n;
+    if (BigInt(prefix + digits) > max) {
+      const radix = { hex: 16, dec: 10, bin: 2 }[base];
+      return `Too large for ${width} bit${width === 1 ? "" : "s"}: at most ${prefix}${max.toString(radix)}.`;
+    }
+    return null;
+  }
 
   // The value cell is as wide as the format's longest value for the net,
   // so the column keeps its width as the value changes.
@@ -283,8 +306,12 @@
       state.className = "state";
       const ctl = document.createElement("td");
       let inp = null;
+      let check = () => null;
       const fmtCell = formatCell(o.name, o.width, o.format, (fmt) => {
-        if (inp) inp.placeholder = PLACEHOLDERS[fmt];
+        if (inp) {
+          inp.placeholder = PLACEHOLDERS[fmt];
+          check(false);
+        }
         showDriveState(tr);
       });
       const box = document.createElement("div");
@@ -301,11 +328,24 @@
         inp = document.createElement("input");
         inp.type = "text";
         inp.placeholder = PLACEHOLDERS[fmtCell.firstChild.value];
-        inp.title = "A value in the row's format, or with a 0x or 0b prefix";
+        inp.dataset.tip = VALUE_TIP;
         const b = document.createElement("button");
         b.textContent = "Drive";
-        const go = () => inp.value.trim()
-          && write({ name: o.name, value: typedValue(inp.value, fmtCell.firstChild.value) });
+        // Checked as typed; an empty box only when Drive is pressed.
+        check = (onDrive) => {
+          const err = valueError(inp.value, fmtCell.firstChild.value, o.width, onDrive);
+          inp.classList.toggle("invalid", Boolean(err));
+          inp.dataset.tip = err || VALUE_TIP;
+          return err;
+        };
+        inp.oninput = () => check(false);
+        const go = () => {
+          if (check(true)) {
+            inp.focus();
+            return;
+          }
+          write({ name: o.name, value: typedValue(inp.value, fmtCell.firstChild.value) });
+        };
         b.onclick = go;
         inp.onkeydown = (e) => { if (e.key === "Enter") go(); };
         box.append(inp, b);
