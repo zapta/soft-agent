@@ -246,6 +246,11 @@ Writes, by mode:
 - **override:** the debugger can take over a net the design drives, through a
   mux at that net's driver, released by default. With option A the build cuts
   the net and inserts the mux itself, a netlist edit (Build integration).
+  Every load of the net sees the driven value, the design's own logic
+  included: overriding a register's output also feeds the register's next
+  value, through its logic and its hold path, so after a release the
+  register carries on from the driven value (seen on the Alhambra II
+  example's running light, 2026-11-25).
 
 ### Naming rules (version 1)
 

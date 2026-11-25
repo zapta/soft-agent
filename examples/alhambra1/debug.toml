@@ -1,0 +1,47 @@
+#:schema https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json
+# What the debugger sees in main.v, and how it reaches the computer.
+# See docs/debugger.md, The debug configuration file.
+
+# The debugger and its UART run on the board's 12 MHz clock.
+clock = "sys_clk"
+
+# The board's UART, by its name in the board catalog: the FTDI chip's second
+# channel, over the same USB cable that programs the board.
+uplink = { kind = "uart", resource = "uart", baud = 115200 }
+
+# Net paths start with the top module, main. A net has any width; a list
+# combines one-bit nets and pins into one bus.
+
+# drive: nets you set from the panel.
+
+# Take over the LEDs: type a pattern, such as 10101010, then Release to give
+# them back to the running light.
+[[drive]]
+name = "leds"
+net = "main.pattern"
+mode = "override"
+format = "bin"
+
+# Stop the light: 1 freezes it, 0 lets it run. A source net: only the
+# debugger drives it (see main.v).
+[[drive]]
+name = "freeze"
+net = "main.freeze"
+mode = "source"
+
+# watch: nets you read, live, in the panel.
+
+[[watch]]
+name = "pattern"
+net = "main.pattern"
+format = "bin"
+
+# The step timer, counting to 3,000,000 four times a second.
+[[watch]]
+name = "timer"
+net = "main.u_ticker.count"
+format = "dec"
+
+[[watch]]
+name = "step"
+net = "main.step"

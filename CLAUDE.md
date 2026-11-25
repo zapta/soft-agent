@@ -20,6 +20,12 @@ the overview, how to run it and how to bump the engine.
   Verilog). `schemas/logix-debug-v1.json` is generated from
   `src/debug/config.rs`: `UPDATE_SCHEMA=1 cargo test schema_file`.
 - `scripts/run-in-claude.sh`, `scripts/serve.sh`: build and run for Claude Code.
+- `scripts/debug-run.sh` (build with the debugger, program, open the panel)
+  and `scripts/debug-panel.sh`: the debugger from the shell, with no AI
+  agent, through `scripts/softagent.py`, a small MCP client.
+- `examples/`: projects friends can run with no AI agent, each with a
+  README; `examples/alhambra1` is the Alhambra II one. Keep them working
+  with the scripts, and their READMEs right.
 
 ## Rules
 

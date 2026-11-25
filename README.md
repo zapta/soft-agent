@@ -28,7 +28,10 @@ separate process:
 - macOS on Apple Silicon (as the engine, for now).
 - Rust via rustup (`brew install rustup`). The first build installs the
   version pinned in `rust-toolchain.toml`.
-- [Claude Code](https://claude.com/claude-code), signed in.
+- Python 3, for the scripts (it comes with `xcode-select --install`).
+- [Claude Code](https://claude.com/claude-code), signed in, only to use the
+  tools from an AI agent: the examples and the debug scripts run without
+  one.
 
 ## Run Claude Code against it
 
@@ -52,6 +55,20 @@ To have soft-agent in every Claude Code session instead:
 ```sh
 claude mcp add --scope user soft-agent -- "$PWD/scripts/serve.sh"
 ```
+
+## Try it: an example, with no AI agent
+
+[examples/alhambra1](examples/alhambra1) is a running light for the
+Alhambra II with the debugger in it. With the board connected:
+
+```sh
+examples/alhambra1/run.sh
+```
+
+It builds soft-agent, builds the design with the debugger, programs the board
+and opens the debug panel; its README says what to try. Any project folder
+with a `logix.json`, sources and a `debug.toml` works the same way:
+`scripts/debug-run.sh PROJECT_FOLDER`.
 
 ## Debug panel from the shell
 

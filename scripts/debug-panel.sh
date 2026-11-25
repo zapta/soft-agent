@@ -9,8 +9,10 @@
 # connected board's serial port. See scripts/debug_panel.py.
 
 set -euo pipefail
+started_in="$PWD"
 cd "$(dirname "$0")/.."
 source scripts/_rust-env.sh
 
 server="$(build_and_copy)"
-exec python3 -I scripts/debug_panel.py --server "$server" --engine-folder "$engine_folder" "$@"
+exec python3 -I scripts/debug_panel.py --server "$server" --engine-folder "$engine_folder" \
+  --cwd "$started_in" "$@"

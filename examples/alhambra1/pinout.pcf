@@ -1,0 +1,17 @@
+# Alhambra II pins for main.v.
+
+# 12 MHz clock.
+set_io sys_clk 49
+
+# LED0 to LED7, active high.
+set_io leds[0] 45
+set_io leds[1] 44
+set_io leds[2] 43
+set_io leds[3] 42
+set_io leds[4] 41
+set_io leds[5] 39
+set_io leds[6] 38
+set_io leds[7] 37
+
+# The debugger's UART (pins 61 and 62) is added by the debug build:
+# don't use those pins here.
