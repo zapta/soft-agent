@@ -105,7 +105,11 @@
       "type": "object",
       "properties": {
         "net": {
-          "description": "The net: its instance path from the top module, starting with the top\nmodule's name, such as main.u_ctrl.state, or main.count for a net in\nthe top module itself.",
+          "description": "A one-bit net, by its instance path from the top module, starting\nwith the top module's name, such as main.u_ctrl.busy, or main.blink\nfor a net in the top module itself. Give net or bus.",
+          "type": "string"
+        },
+        "bus": {
+          "description": "A net of two bits or more, named as for net, such as\nmain.u_ctrl.state. Give net or bus.",
           "type": "string"
         },
         "name": {
@@ -116,17 +120,18 @@
           ]
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "net"
-      ]
+      "additionalProperties": false
     },
     "OutputNet": {
       "description": "A net the debugger drives.",
       "type": "object",
       "properties": {
         "net": {
-          "description": "The net, named as for inputs.",
+          "description": "A one-bit net, named as for inputs. Give net or bus.",
+          "type": "string"
+        },
+        "bus": {
+          "description": "A net of two bits or more, named as for inputs. Give net or bus.",
           "type": "string"
         },
         "name": {
@@ -142,10 +147,7 @@
           "default": "override"
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "net"
-      ]
+      "additionalProperties": false
     },
     "OutputMode": {
       "type": "string",

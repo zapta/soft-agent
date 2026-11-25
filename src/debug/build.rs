@@ -672,8 +672,23 @@ fn layout(
 ) -> Result<DebugMap, ToolError> {
     let mut inputs = Vec::new();
     let mut offset = 0;
+    let shape = |net: &str, bus: bool, width: usize| -> Result<(), ToolError> {
+        let wrong = match (bus, width) {
+            (false, w) if w != 1 => Some(format!("is {w} bits: name it with bus, not net")),
+            (true, 1) => Some("is 1 bit: name it with net, not bus".to_string()),
+            _ => None,
+        };
+        match wrong {
+            Some(why) => Err(ToolError::new(
+                Category::Design,
+                format!("{}: {}.{net} {why}.", input.debug_file, input.top_module),
+            )),
+            None => Ok(()),
+        }
+    };
     for i in &config.input {
         let width = design.widths[&i.net];
+        shape(&i.net, !i.bus.is_empty(), width)?;
         inputs.push(MapInput {
             name: i.name.clone().unwrap_or_else(|| i.net.clone()),
             net: i.net.clone(),
@@ -688,6 +703,7 @@ fn layout(
     let mut enables = 0;
     for o in &config.output {
         let width = design.widths[&o.net];
+        shape(&o.net, !o.bus.is_empty(), width)?;
         let enable_bit = (o.mode == OutputMode::Override).then(|| {
             enables += 1;
             enables - 1

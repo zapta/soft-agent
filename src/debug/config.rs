@@ -74,10 +74,15 @@ pub enum UplinkKind {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InputNet {
-    /// The net: its instance path from the top module, starting with the top
-    /// module's name, such as main.u_ctrl.state, or main.count for a net in
-    /// the top module itself.
+    /// A one-bit net, by its instance path from the top module, starting
+    /// with the top module's name, such as main.u_ctrl.busy, or main.blink
+    /// for a net in the top module itself. Give net or bus.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub net: String,
+    /// A net of two bits or more, named as for net, such as
+    /// main.u_ctrl.state. Give net or bus.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub bus: String,
     /// The host's name for it. Defaults to the net's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -87,8 +92,12 @@ pub struct InputNet {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutputNet {
-    /// The net, named as for inputs.
+    /// A one-bit net, named as for inputs. Give net or bus.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub net: String,
+    /// A net of two bits or more, named as for inputs. Give net or bus.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub bus: String,
     /// The host's name for it. Defaults to the net's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -119,7 +128,31 @@ impl OutputMode {
 /// Parses a debug file's text, and checks what its types can't.
 pub fn parse(text: &str) -> Result<DebugConfig, String> {
     let json = strip_comments(text);
-    let config: DebugConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let mut config: DebugConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    // net or bus: after this, net holds the path either way, and bus stays
+    // set for a bus.
+    for (net, bus) in config
+        .input
+        .iter_mut()
+        .map(|i| (&mut i.net, &i.bus))
+        .chain(config.output.iter_mut().map(|o| (&mut o.net, &o.bus)))
+    {
+        match (net.is_empty(), bus.is_empty()) {
+            (true, false) => *net = bus.clone(),
+            (false, true) => {}
+            (false, false) => {
+                return Err(format!(
+                    "{net:?} and {bus:?}: give net (one bit) or bus (two bits or more), not both."
+                ));
+            }
+            (true, true) => {
+                return Err(
+                    "An input or output names no net: give net (one bit) or bus (two bits or more)."
+                        .into(),
+                );
+            }
+        }
+    }
     if let Some(s) = &config.schema
         && s != SCHEMA_URL
     {
@@ -346,6 +379,26 @@ mod tests {
             let e = up(bad).unwrap_err();
             assert!(e.contains(why), "{bad}: {e}");
         }
+    }
+
+    #[test]
+    fn net_or_bus() {
+        let p = |e: &str| {
+            parse(&format!(
+                r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"input":[{e}]}}"#
+            ))
+        };
+        let c = p(r#"{"bus":"main.count"}"#).unwrap();
+        assert_eq!(
+            (c.input[0].net.as_str(), c.input[0].bus.as_str()),
+            ("main.count", "main.count")
+        );
+        assert!(
+            p(r#"{"net":"main.a","bus":"main.a"}"#)
+                .unwrap_err()
+                .contains("not both")
+        );
+        assert!(p(r#"{"name":"x"}"#).unwrap_err().contains("names no net"));
     }
 
     #[test]

@@ -123,9 +123,9 @@ An example, for the iCESugar v1.5:
   // The board's UART, by its resource name in the catalog (TX 6, RX 4).
   "uplink": { "kind": "uart", "resource": "uart", "baud": 115200 },
   "input": [
-    { "net": "main.count", "name": "counter" },
+    { "bus": "main.count", "name": "counter" },
     { "net": "main.blink", "name": "blink" },
-    { "net": "main.u_ctrl.state" }
+    { "bus": "main.u_ctrl.state" }
   ],
   "output": [
     { "net": "main.blink", "name": "blink_force", "mode": "override" }
@@ -152,6 +152,10 @@ An example, for the iCESugar v1.5:
 
   `baud` is optional and defaults to 115200. The debug map records the
   resource and the pins it resolved to.
+- `net` or `bus`, in each input and output: `net` names a one-bit net and
+  `bus` a net of two bits or more, so the file shows each one's shape. Give
+  exactly one. The build checks it against the design: a 23-bit counter
+  named with `net` is an error that says it is 23 bits.
 - `input` and `output`, from the debugger's side, as AMD's VIO names
   probe\_in and probe\_out: an input is a net it reads, an output a net it
   drives. `name` is the host's name for it (defaults to the net's path); widths
@@ -178,7 +182,7 @@ over a net that the design already drives.
 
 | Option | How it looks | For | Against |
 | --- | --- | --- | --- |
-| A. Names in the file (version 1) | `"net": "main.u_ctrl.state"` | No design edits at all (R3); one place to see what is debugged | Names break when code is renamed; synthesis renames and removes nets, so the build must keep them alive and say when it can't (R9) |
+| A. Names in the file (version 1) | `"bus": "main.u_ctrl.state"` | No design edits at all (R3); one place to see what is debugged | Names break when code is renamed; synthesis renames and removes nets, so the build must keep them alive and say when it can't (R9) |
 | B. Attributes in the design (later) | `(* logix_debug = "input" *) reg [3:0] state;` | Travels with the code, survives renames; a normal build ignores unknown attributes | Edits the design; attributes alone don't say the host name or write mode unless their value grows a small syntax |
 | C. Probe modules in the design (later) | `logix_probe #(.NAME("state")) p (.value(state));` and `logix_source #(.NAME("en")) s (.design(en_logic), .value(en));` | Explicit and simulatable: a testbench sees the same pass-through; a write is a clean mux the designer placed | A normal build needs the probe modules' pass-through file too; most design edits of the three |
 
@@ -205,7 +209,7 @@ Writes, by mode:
 - Each instance is its own net: a module instantiated twice gives
   `main.u_lane0.err` and `main.u_lane1.err`, and the file lists each one it wants.
 - Generate blocks are written as yosys names them: `main.gen_lane[2].u_lane.err`.
-- Whole nets only: no bit selects (`bus[7:4]`) and no wildcards in version 1.
+- Whole nets and buses only: no bit selects (`bus[7:4]`) and no wildcards in version 1.
 - A name that matches no net, or more than one, is a build error (R9).
 
 Capture phase: the same selection marks capture signals (`"capture"` in the
