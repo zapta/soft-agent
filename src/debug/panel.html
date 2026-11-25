@@ -109,7 +109,7 @@
     <h2>Drive</h2>
     <div class="card">
       <div class="scroll"><table id="drive">
-        <thead><tr><th>Name</th><th class="num">Bits</th><th>Mode</th><th>State</th><th>Value</th></tr></thead>
+        <thead><tr><th>Name</th><th class="num">Bits</th><th>Mode</th><th class="center">Format</th><th>State</th><th>Value</th></tr></thead>
         <tbody></tbody>
       </table></div>
       <div class="empty" id="no-drive" hidden>This build drives no nets.</div>
@@ -179,15 +179,15 @@
     return td;
   }
 
-  // Each watched row's format: the one chosen in its menu (remembered by
-  // name in this browser), else the debug file's, else binary for one bit
-  // and hex for more.
+  // Each row's format, watched or driven: the one chosen in its menu
+  // (remembered by name in this browser), else the debug file's, else
+  // decimal for one bit and hex for more.
   const FORMATS = [["hex", "Hex"], ["dec", "Decimal"], ["bin", "Binary"]];
   const FORMATS_KEY = "logix-debug-panel.formats";
   let formats = {};
   try { formats = JSON.parse(localStorage.getItem(FORMATS_KEY) || "{}") || {}; } catch { formats = {}; }
   function formatOf(name, width, fileFormat) {
-    return formats[name] || fileFormat || (width === 1 ? "bin" : "hex");
+    return formats[name] || fileFormat || (width === 1 ? "dec" : "hex");
   }
   function saveFormat(name, fmt) {
     formats[name] = fmt;
@@ -202,6 +202,36 @@
     if (fmt === "dec") return n.toString();
     return "0x" + n.toString(16).padStart(Math.ceil(bits.length / 4), "0");
   }
+
+  // A row's format menu; onChange gets the new format.
+  function formatCell(name, width, fileFormat, onChange) {
+    const td = document.createElement("td");
+    const sel = document.createElement("select");
+    sel.className = "fmt";
+    sel.title = `Format of ${name}`;
+    for (const [v, label] of FORMATS) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = label;
+      sel.append(o);
+    }
+    sel.value = formatOf(name, width, fileFormat);
+    sel.onchange = () => {
+      saveFormat(name, sel.value);
+      onChange(sel.value);
+    };
+    td.append(sel);
+    return td;
+  }
+
+  // A typed drive value, read in the row's format unless it has its own
+  // 0x or 0b prefix, as the text debug_write takes.
+  function typedValue(text, fmt) {
+    const t = text.trim().replace(/_/g, "");
+    if (/^0[xb]/i.test(t) || fmt === "dec") return t;
+    return (fmt === "hex" ? "0x" : "0b") + t;
+  }
+  const PLACEHOLDERS = { hex: "hex, such as 1f", dec: "decimal, such as 31", bin: "binary, such as 11111" };
 
   // The value cell is as wide as the format's longest value for the net,
   // so the column keeps its width as the value changes.
@@ -238,24 +268,11 @@
       const tr = document.createElement("tr");
       tr.dataset.name = i.name;
       const value = cell("", "mono num value");
-      const fmtCell = document.createElement("td");
-      const sel = document.createElement("select");
-      sel.className = "fmt";
-      sel.title = `Format of ${i.name}`;
-      for (const [v, label] of FORMATS) {
-        const o = document.createElement("option");
-        o.value = v;
-        o.textContent = label;
-        sel.append(o);
-      }
-      sel.value = formatOf(i.name, i.width, i.format);
-      sizeValue(value, i.width, sel.value);
-      sel.onchange = () => {
-        saveFormat(i.name, sel.value);
-        sizeValue(value, i.width, sel.value);
-        value.textContent = shown(tr.dataset.bits, sel.value);
-      };
-      fmtCell.append(sel);
+      const fmtCell = formatCell(i.name, i.width, i.format, (fmt) => {
+        sizeValue(value, i.width, fmt);
+        value.textContent = shown(tr.dataset.bits, fmt);
+      });
+      sizeValue(value, i.width, fmtCell.firstChild.value);
       tr.append(nameCell(i.name, i.net), cell(String(i.width), "num"), fmtCell, value);
       ib.append(tr);
     }
@@ -265,6 +282,11 @@
       const state = cell("");
       state.className = "state";
       const ctl = document.createElement("td");
+      let inp = null;
+      const fmtCell = formatCell(o.name, o.width, o.format, (fmt) => {
+        if (inp) inp.placeholder = PLACEHOLDERS[fmt];
+        showDriveState(tr);
+      });
       const box = document.createElement("div");
       box.className = "controls";
       if (o.width === 1) {
@@ -276,12 +298,14 @@
           box.append(b);
         }
       } else {
-        const inp = document.createElement("input");
+        inp = document.createElement("input");
         inp.type = "text";
-        inp.placeholder = "0x.., 0b.. or 12";
+        inp.placeholder = PLACEHOLDERS[fmtCell.firstChild.value];
+        inp.title = "A value in the row's format, or with a 0x or 0b prefix";
         const b = document.createElement("button");
         b.textContent = "Drive";
-        const go = () => inp.value.trim() && write({ name: o.name, value: inp.value.trim() });
+        const go = () => inp.value.trim()
+          && write({ name: o.name, value: typedValue(inp.value, fmtCell.firstChild.value) });
         b.onclick = go;
         inp.onkeydown = (e) => { if (e.key === "Enter") go(); };
         box.append(inp, b);
@@ -296,11 +320,32 @@
       }
       ctl.append(box);
       tr.append(nameCell(o.name, o.net), cell(String(o.width), "num"),
-        modeCell(o.mode), state, ctl);
+        modeCell(o.mode), fmtCell, state, ctl);
       ob.append(tr);
     }
     $("no-watch").hidden = info.watch.length > 0;
     $("no-drive").hidden = info.drive.length > 0;
+  }
+
+  // A drive row's state, in its format: read back from the board, or, when
+  // it couldn't be, what was last written, marked unconfirmed.
+  function showDriveState(tr) {
+    const td = tr.querySelector(".state");
+    const driven = tr.dataset.driven === "1";
+    const fmt = tr.querySelector(".fmt").value;
+    const text = (driven ? `driven ${shown(tr.dataset.bits, fmt)}` : "released")
+      + (tr.dataset.verified ? "" : " (unconfirmed)");
+    let pill = td.firstChild;
+    if (!pill) {
+      pill = document.createElement("span");
+      td.append(pill);
+    }
+    pill.className = "pill " + (driven ? "on" : "off");
+    if (pill.textContent !== text) pill.textContent = text;
+    if (tr.dataset.verified) delete pill.dataset.tip;
+    else pill.dataset.tip = "Not read from the board (it didn't answer): what was last written.";
+    const rel = tr.querySelector(".release");
+    if (rel) rel.disabled = !driven;
   }
 
   function setText(td, text) {
@@ -323,14 +368,10 @@
     for (const o of info.drive) {
       const tr = $("drive").querySelector(`tr[data-name="${CSS.escape(o.name)}"]`);
       if (!tr) continue;
-      const td = tr.querySelector(".state");
-      td.replaceChildren();
-      const pill = document.createElement("span");
-      pill.className = "pill " + (o.driven ? "on" : "off");
-      pill.textContent = o.driven ? `driven ${o.hex}` : "released";
-      td.append(pill);
-      const rel = tr.querySelector(".release");
-      if (rel) rel.disabled = !o.driven;
+      tr.dataset.driven = o.driven ? "1" : "";
+      tr.dataset.bits = o.bits;
+      tr.dataset.verified = info.verified ? "1" : "";
+      showDriveState(tr);
     }
     if (state.values.length) {
       lastRead = Date.now();

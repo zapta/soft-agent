@@ -128,7 +128,7 @@ module logix_debugger_tb;
     // INFO
     frame(8'h01, 0, 0);
     expect_status(0, 9);
-    if (rep[0] !== 1) $fatal(1, "protocol %0d", rep[0]);
+    if (rep[0] !== 2) $fatal(1, "protocol %0d", rep[0]);
     if ({rep[4], rep[3], rep[2], rep[1]} !== ID) $fatal(1, "build ID");
     if ({rep[6], rep[5]} !== 3 || {rep[8], rep[7]} !== 2) $fatal(1, "sizes");
 
@@ -159,11 +159,24 @@ module logix_debugger_tb;
     frame(8'h04, 3, 0);
     if (wr_out !== 12'hF21) $fatal(1, "wr_out %h", wr_out);
 
-    // OVERRIDE on and off.
+    // READ_WRITES gives back what was written.
+    req[0] = 0; req[1] = 0; req[2] = 2;
+    frame(8'h06, 3, 0);
+    expect_status(0, 2);
+    if ({rep[1], rep[0]} !== 16'h0F21) $fatal(1, "read back writes %h%h", rep[1], rep[0]);
+    req[0] = 1; req[1] = 0; req[2] = 2;
+    frame(8'h06, 3, 0);
+    expect_status(3, 0);
+
+    // OVERRIDE on and off, each read back with READ_ENABLES.
     req[0] = 0; req[1] = 0; req[2] = 8'h02;
     frame(8'h05, 3, 0);
     expect_status(0, 0);
     if (ovr_en !== 2'b10) $fatal(1, "ovr_en %b", ovr_en);
+    req[0] = 0; req[1] = 0; req[2] = 1;
+    frame(8'h07, 3, 0);
+    expect_status(0, 1);
+    if (rep[0] !== 8'h02) $fatal(1, "read back enables %h", rep[0]);
     req[2] = 8'h00;
     frame(8'h05, 3, 0);
     if (ovr_en !== 2'b00) $fatal(1, "ovr_en %b", ovr_en);

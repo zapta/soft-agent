@@ -901,6 +901,7 @@ fn layout(
             width,
             offset,
             members,
+            format: o.format.map(|f| f.as_str().to_string()),
             mode: o.mode.as_str().into(),
             enable_bit,
         });

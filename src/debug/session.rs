@@ -159,6 +159,33 @@ fn write_space(s: &mut Session, command: u8, first: usize, count: usize) -> Resu
     Ok(())
 }
 
+/// Reads `total` bytes of a space (READ, READ_WRITES or READ_ENABLES), a
+/// reply's worth at a time.
+fn read_space(s: &mut Session, command: u8, total: usize) -> Result<Vec<u8>, ToolError> {
+    let mut bytes = Vec::with_capacity(total);
+    while bytes.len() < total {
+        let n = (total - bytes.len()).min(protocol::MAX_READ);
+        let mut payload = (bytes.len() as u16).to_le_bytes().to_vec();
+        payload.push(n as u8);
+        let got = transact(s, command, &payload)?;
+        if got.len() != n {
+            return Err(ToolError::engine(format!(
+                "The debugger's reply to command {command:02x} has the wrong length."
+            )));
+        }
+        bytes.extend(got);
+    }
+    Ok(bytes)
+}
+
+/// Reads the write registers and the override enables back from the
+/// debugger into the session's copy, so what it reports is the board's.
+fn read_back(s: &mut Session) -> Result<(), ToolError> {
+    s.wr = read_space(s, protocol::READ_WRITES, s.map.write_bytes)?;
+    s.en = read_space(s, protocol::READ_ENABLES, s.map.enable_bytes)?;
+    Ok(())
+}
+
 /// Releases every override and clears the write registers.
 fn reset(s: &mut Session) -> Result<(), ToolError> {
     s.en = vec![0; s.map.enable_bytes];
@@ -436,19 +463,7 @@ pub fn read(input: DebugReadInput) -> Result<DebugReadOutput, ToolError> {
         };
         same_build(s)?;
         transact(s, protocol::SNAPSHOT, &[])?;
-        let mut bytes = Vec::with_capacity(s.map.read_bytes);
-        while bytes.len() < s.map.read_bytes {
-            let n = (s.map.read_bytes - bytes.len()).min(protocol::MAX_READ);
-            let mut payload = (bytes.len() as u16).to_le_bytes().to_vec();
-            payload.push(n as u8);
-            let got = transact(s, protocol::READ, &payload)?;
-            if got.len() != n {
-                return Err(ToolError::engine(
-                    "The debugger's READ reply has the wrong length.",
-                ));
-            }
-            bytes.extend(got);
-        }
+        let bytes = read_space(s, protocol::READ, s.map.read_bytes)?;
         Ok(DebugReadOutput {
             values: wanted
                 .into_iter()
@@ -526,7 +541,8 @@ pub struct DebugWriteOutput {
     pub name: String,
     /// True while the debugger drives the net.
     pub driven: bool,
-    /// The value the debugger drives, in hex; omitted after a release.
+    /// The value the debugger drives, read back from it, in hex; omitted
+    /// when it doesn't drive the net.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hex: Option<String>,
 }
@@ -585,10 +601,16 @@ pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
             protocol::set_bits(&mut s.en, bit, &[true]);
             write_space(s, protocol::OVERRIDE, byte, 1)?;
         }
+        // What the debugger now holds, read back.
+        read_back(s)?;
+        let held = protocol::get_bits(&s.wr, o.offset, o.width);
+        let driven = o
+            .enable_bit
+            .is_none_or(|b| protocol::get_bits(&s.en, b, 1)[0]);
         Ok(DebugWriteOutput {
             name: o.name.clone(),
-            driven: true,
-            hex: Some(net_value(&o.name, &o.net, &bits).hex),
+            driven,
+            hex: driven.then(|| net_value(&o.name, &o.net, &held).hex),
         })
     })
 }
@@ -734,6 +756,9 @@ pub struct SessionInfo {
     pub build_id: String,
     pub board: String,
     pub top_module: String,
+    /// True when the driven state was just read back from the board;
+    /// false when it couldn't be, and it is what the host last wrote.
+    pub verified: bool,
     pub drive: Vec<OutputState>,
     pub watch: Vec<NetInfo>,
 }
@@ -746,13 +771,20 @@ pub struct OutputState {
     pub mode: String,
     /// True while the debugger drives it.
     pub driven: bool,
-    /// The value the host last wrote, in hex.
+    /// The value the debugger holds for it, in hex and as bits (most
+    /// significant first); read back from the board when `verified`.
     pub hex: String,
+    pub bits: String,
+    /// The debug file's format for showing it, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
 }
 
 pub fn info(id: &str) -> Result<SessionInfo, ToolError> {
     with_session(id, |s| {
+        let verified = same_build(s).and_then(|_| read_back(s)).is_ok();
         Ok(SessionInfo {
+            verified,
             session: id.to_string(),
             port: s.port_name.clone(),
             build_id: s.map.build_id.clone(),
@@ -785,6 +817,12 @@ pub fn info(id: &str) -> Result<SessionInfo, ToolError> {
                             .enable_bit
                             .is_none_or(|b| protocol::get_bits(&s.en, b, 1)[0]),
                         hex: net_value(&o.name, &o.net, &bits).hex,
+                        bits: bits
+                            .iter()
+                            .rev()
+                            .map(|&b| if b { '1' } else { '0' })
+                            .collect(),
+                        format: o.format.clone(),
                     }
                 })
                 .collect(),

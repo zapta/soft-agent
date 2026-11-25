@@ -4,7 +4,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 pub const SYNC_HOST: u8 = 0xA5;
 pub const SYNC_REPLY: u8 = 0x5A;
 
@@ -13,6 +13,10 @@ pub const SNAPSHOT: u8 = 0x02;
 pub const READ: u8 = 0x03;
 pub const WRITE: u8 = 0x04;
 pub const OVERRIDE: u8 = 0x05;
+/// Protocol 2: the write registers and the enables, as the debugger holds
+/// them.
+pub const READ_WRITES: u8 = 0x06;
+pub const READ_ENABLES: u8 = 0x07;
 
 /// Bytes of data one WRITE or OVERRIDE carries (the debugger keeps 8
 /// payload bytes, 2 of them the offset).
@@ -160,6 +164,9 @@ pub struct MapDrive {
     pub width: usize,
     /// Its first bit in the write space.
     pub offset: usize,
+    /// The debug file's format for showing it (hex, dec or bin), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
     /// override or source.
     pub mode: String,
     /// Its bit in the override enables; none for source mode, which is

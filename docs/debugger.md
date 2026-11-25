@@ -185,10 +185,12 @@ bus = "main.u_ctrl.state"
   `input` in earlier drafts, which read backwards from the design's side.
   `name` is the host's name for each (defaults to the net's path); widths
   come from the design, not the file.
-- `format` of a watch entry: how hosts show its value at first, `hex`,
-  `dec` or `bin`. Omitted means `bin` for one bit and `hex` for more. In
-  the panel, each row's Format menu changes it; a choice made there is
-  remembered by name in that browser and wins over the file's.
+- `format` of a watch or drive entry: how hosts show its value at first,
+  `hex`, `dec` or `bin`, and for a drive entry, how a typed value is read
+  (a value with its own `0x` or `0b` prefix means what it says). Optional:
+  omitted means `dec` for one bit, so a bit shows as `1`, and `hex` for
+  more. In the panel, each row's Format menu changes it; a choice made
+  there is remembered by name in that browser and wins over the file's.
 - `mode` of a drive entry: `override` (the debugger can take over a net the
   design drives, and releases it back to the design) or `source` (a net
   with no driver in the design, driven only by the debugger). See the next
@@ -307,7 +309,7 @@ nets.
   handshake for buses (R11).
 - **Size:** measured on the blinky milestone.
 
-### Protocol (version 1)
+### Protocol (version 2)
 
 The protocol works on 8-bit bytes. Read nets are packed, in map order, into
 one little-endian bit vector, the read space; write nets likewise into the
@@ -327,6 +329,8 @@ not silence, so the host never waits for a timeout on a well-formed frame.
 | READ | 0x03 | byte offset (2), count (1) | bytes of the snapshot |
 | WRITE | 0x04 | byte offset (2), bytes | none; writes the write registers |
 | OVERRIDE | 0x05 | byte offset (2), bytes of the enable mask | none; one enable bit per write net, in write-net order |
+| READ_WRITES | 0x06 | byte offset (2), count (1) | bytes of the write registers, as the debugger holds them |
+| READ_ENABLES | 0x07 | byte offset (2), count (1) | bytes of the override enables, as the debugger holds them |
 | CAPTURE\_\* (next phase) | 0x10 and up | arm, trigger, status, read | capture data in blocks |
 
 Status: 0 OK, 1 bad CRC, 2 unknown command, 3 bad length or range.
@@ -518,8 +522,15 @@ of a variable shift, and register the reply byte.
   The engine's `build` builds them into the build folder, next to
   `debug_map.json`.
 - **Sessions:** `debug_open` checks the build ID and the read and write
-  sizes, then releases every override and clears the write registers, since
-  the debugger can't be asked for them. `debug_close` releases them too.
+  sizes, then releases every override and clears the write registers.
+  `debug_close` releases them too. Protocol 2 (2026-11-25) added
+  READ_WRITES and READ_ENABLES: `debug_write` reports the state it reads
+  back after writing, and the panel reads the drive state back from the
+  board at every refresh, so it shows what the debugger really drives. When
+  the board doesn't answer, the panel shows the last state written, marked
+  "unconfirmed". Tested on the iCESugar: reprogramming the board under an
+  open session restarted it, and the panel's next read showed the override
+  released. A build made for protocol 1 is refused: build it again.
   Every `debug_read` and `debug_write` asks the debugger for its build ID
   first (one INFO frame, about a millisecond), and refuses when the board
   was programmed with another build after `debug_open`, since the session's

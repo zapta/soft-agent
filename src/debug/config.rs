@@ -89,7 +89,7 @@ pub struct WatchNet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus: Option<Bus>,
     /// How hosts such as the debug panel show its value at first: hex, dec
-    /// or bin. Omitted means bin for one bit and hex for more.
+    /// or bin. Omitted means dec for one bit and hex for more.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<ValueFormat>,
     /// The paths it reads, most significant first: the net, or the list's
@@ -163,6 +163,10 @@ pub struct DriveNet {
     /// Give net or bus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus: Option<Bus>,
+    /// How hosts such as the debug panel show and read its value at first: hex, dec
+    /// or bin. Omitted means dec for one bit and hex for more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<ValueFormat>,
     /// The paths it drives, most significant first. Set by parse.
     #[serde(skip)]
     #[schemars(skip)]

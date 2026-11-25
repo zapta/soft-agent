@@ -10,7 +10,9 @@
 //
 // Commands: 01 INFO, 02 SNAPSHOT, 03 READ (offset lo, offset hi, count),
 // 04 WRITE (offset lo, offset hi, bytes), 05 OVERRIDE (offset lo, offset hi,
-// bytes of the enable mask). Status: 0 OK, 1 bad CRC, 2 unknown command,
+// bytes of the enable mask), 06 READ_WRITES and 07 READ_ENABLES (offset lo,
+// offset hi, count: the write registers and the override enables as the
+// debugger holds them). Status: 0 OK, 1 bad CRC, 2 unknown command,
 // 3 bad length or range.
 
 module logix_debugger #(
@@ -28,7 +30,7 @@ module logix_debugger #(
     output wire [  OVR_W-1:0] ovr_en
 );
 
-  localparam [7:0] PROTOCOL = 8'd1;
+  localparam [7:0] PROTOCOL = 8'd2;
   localparam integer READ_BYTES = (READ_W + 7) / 8;
   localparam integer WRITE_BYTES = (WRITE_W + 7) / 8;
   localparam integer OVR_BYTES = (OVR_W + 7) / 8;
@@ -114,6 +116,8 @@ module logix_debugger #(
   wire [7:0] p_count = pay[23:16];
   wire [7:0] p_byte = pay >> ((wi + 8'd2) * 8);
   wire [7:0] snap_byte = snap >> ((roff + ti - 9'd4) * 8);
+  wire [7:0] wr_byte = wr_reg >> ((roff + ti - 9'd4) * 8);
+  wire [7:0] en_byte = en_reg >> ((roff + ti - 9'd4) * 8);
 
   // The reply's byte number ti.
   reg [7:0] reply_byte;
@@ -135,6 +139,8 @@ module logix_debugger #(
         9'd11: reply_byte = WRITE_BYTES[7:0];
         default: reply_byte = WRITE_BYTES[15:8];
       endcase
+    else if (cmd == 8'h06) reply_byte = wr_byte;
+    else if (cmd == 8'h07) reply_byte = en_byte;
     else reply_byte = snap_byte;
   end
 
@@ -198,8 +204,9 @@ module logix_debugger #(
               8'h02:
               if (len != 0) status <= 8'd3;
               else snap <= rd_in;
-              8'h03:
-              if (len != 3 || p_count > MAX_READ || p_off + p_count > READ_BYTES)
+              8'h03, 8'h06, 8'h07:
+              if (len != 3 || p_count > MAX_READ
+                  || p_off + p_count > (cmd == 8'h03 ? READ_BYTES : cmd == 8'h06 ? WRITE_BYTES : OVR_BYTES))
                 status <= 8'd3;
               else begin
                 rlen <= p_count;
