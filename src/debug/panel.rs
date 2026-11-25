@@ -23,6 +23,11 @@ use logix_engine::tools::EngineTool;
 use super::session;
 
 const PAGE: &str = include_str!("panel.html");
+/// The server's name and how to start it again, which the page shows if it
+/// loses the server.
+const SERVER_NAME: &str = env!("CARGO_PKG_NAME");
+const RESTART_HINT: &str =
+    "Start it again, such as with scripts/debug-panel.sh, then reload this page.";
 /// The largest request the server reads.
 const MAX_REQUEST: usize = 64 * 1024;
 
@@ -202,6 +207,17 @@ async fn handle(mut stream: TcpStream, port: u16, token: &str) -> Option<()> {
                 "200 OK",
                 "text/html; charset=utf-8",
                 PAGE.as_bytes(),
+            )
+            .await
+        }
+        ("GET", "/api/about") => {
+            // For the page to name its server once it can't reach it.
+            respond_json(
+                &mut stream,
+                Ok(json!({
+                    "name": SERVER_NAME,
+                    "restart": RESTART_HINT,
+                })),
             )
             .await
         }
