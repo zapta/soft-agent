@@ -105,19 +105,8 @@
           ]
         },
         "net": {
-          "description": "A one-bit net, named as for watch. Give net or bus.",
-          "type": "string"
-        },
-        "bus": {
-          "description": "A net of two bits or more, or a list of one-bit nets combined into a\nbus, as for watch; a list's nets are driven and released together.\nGive net or bus.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Bus"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "description": "The net, named as for watch; a list's nets are driven and released\ntogether, and can't include pins.",
+          "$ref": "#/$defs/NetSpec"
         },
         "format": {
           "description": "How hosts such as the debug panel show and read its value at first: hex, dec\nor bin. Omitted means dec for one bit and hex for more.",
@@ -136,10 +125,13 @@
           "default": "override"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "net"
+      ]
     },
-    "Bus": {
-      "description": "A bus: one net, or a list of one-bit nets and pins combined.",
+    "NetSpec": {
+      "description": "A net: one path, or a list of one-bit nets and pins combined.",
       "anyOf": [
         {
           "type": "string"
@@ -180,19 +172,8 @@
           ]
         },
         "net": {
-          "description": "A one-bit net, by its instance path from the top module, starting\nwith the top module's name, such as main.u_ctrl.busy, or main.blink\nfor a net in the top module itself. Give net or bus.",
-          "type": "string"
-        },
-        "bus": {
-          "description": "A net of two bits or more, named as for net, such as\nmain.u_ctrl.state; or a list of one-bit nets and pins combined into one bus,\nsuch as [\"pin.21\", \"pin.20\", \"pin.19\", \"pin.18\"], the first the most\nsignificant, as in a Verilog concatenation (a list needs a name).\nGive net or bus.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Bus"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "description": "The net, of any width, by its instance path from the top module,\nstarting with the top module's name, such as main.u_ctrl.state, or\nmain.blink for a net in the top module itself; a package pin as\npin.18; or a list of one-bit nets and pins combined into one bus, such\nas [\"pin.21\", \"pin.20\", \"pin.19\", \"pin.18\"], the first the most\nsignificant, as in a Verilog concatenation (a list needs a name).",
+          "$ref": "#/$defs/NetSpec"
         },
         "format": {
           "description": "How hosts such as the debug panel show its value at first: hex, dec\nor bin. Omitted means dec for one bit and hex for more.",
@@ -206,7 +187,10 @@
           ]
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "net"
+      ]
     }
   },
   "$id": "https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json"

@@ -76,18 +76,18 @@ pub struct WatchNet {
     /// The host's name for it. Defaults to the net's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// A one-bit net, by its instance path from the top module, starting
-    /// with the top module's name, such as main.u_ctrl.busy, or main.blink
-    /// for a net in the top module itself. Give net or bus.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub net: String,
-    /// A net of two bits or more, named as for net, such as
-    /// main.u_ctrl.state; or a list of one-bit nets and pins combined into one bus,
-    /// such as ["pin.21", "pin.20", "pin.19", "pin.18"], the first the most
+    /// The net, of any width, by its instance path from the top module,
+    /// starting with the top module's name, such as main.u_ctrl.state, or
+    /// main.blink for a net in the top module itself; a package pin as
+    /// pin.18; or a list of one-bit nets and pins combined into one bus, such
+    /// as ["pin.21", "pin.20", "pin.19", "pin.18"], the first the most
     /// significant, as in a Verilog concatenation (a list needs a name).
-    /// Give net or bus.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bus: Option<Bus>,
+    #[serde(rename = "net")]
+    pub spec: NetSpec,
+    /// The net's path, or a list as text ({a, b}). Set by parse.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub net: String,
     /// How hosts such as the debug panel show its value at first: hex, dec
     /// or bin. Omitted means dec for one bit and hex for more.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,24 +100,15 @@ pub struct WatchNet {
 }
 
 impl WatchNet {
-    /// True when the file named it with bus.
-    pub fn is_bus(&self) -> bool {
-        self.bus.is_some()
-    }
-
     /// True for a bus combined from a list.
     pub fn is_list(&self) -> bool {
-        matches!(self.bus, Some(Bus::List(_)))
+        matches!(self.spec, NetSpec::List(_))
     }
 }
 
 impl DriveNet {
-    pub fn is_bus(&self) -> bool {
-        self.bus.is_some()
-    }
-
     pub fn is_list(&self) -> bool {
-        matches!(self.bus, Some(Bus::List(_)))
+        matches!(self.spec, NetSpec::List(_))
     }
 }
 
@@ -140,11 +131,11 @@ impl ValueFormat {
     }
 }
 
-/// A bus: one net, or a list of one-bit nets and pins combined.
+/// A net: one path, or a list of one-bit nets and pins combined.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
-pub enum Bus {
-    Net(String),
+pub enum NetSpec {
+    Path(String),
     List(Vec<String>),
 }
 
@@ -155,14 +146,14 @@ pub struct DriveNet {
     /// The host's name for it. Defaults to the net's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// A one-bit net, named as for watch. Give net or bus.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// The net, named as for watch; a list's nets are driven and released
+    /// together, and can't include pins.
+    #[serde(rename = "net")]
+    pub spec: NetSpec,
+    /// The net's path, or a list as text ({a, b}). Set by parse.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub net: String,
-    /// A net of two bits or more, or a list of one-bit nets combined into a
-    /// bus, as for watch; a list's nets are driven and released together.
-    /// Give net or bus.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bus: Option<Bus>,
     /// How hosts such as the debug panel show and read its value at first: hex, dec
     /// or bin. Omitted means dec for one bit and hex for more.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -214,10 +205,10 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
     // net or bus: after this, net holds the path either way (for a list,
     // the list as text), parts the paths, and bus stays set for a bus.
     for i in &mut config.watch {
-        i.parts = parts(&mut i.net, &i.bus, &i.name, "watch")?;
+        i.parts = parts(&mut i.net, &i.spec, &i.name)?;
     }
     for o in &mut config.drive {
-        o.parts = parts(&mut o.net, &o.bus, &o.name, "drive")?;
+        o.parts = parts(&mut o.net, &o.spec, &o.name)?;
     }
     if config.capture.is_some() {
         return Err("capture isn't supported yet: it comes in a later version.".into());
@@ -283,39 +274,27 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
     Ok(config)
 }
 
-/// A watch or drive entry's paths, from net or bus.
-fn parts(
-    net: &mut String,
-    bus: &Option<Bus>,
-    name: &Option<String>,
-    what: &str,
-) -> Result<Vec<String>, String> {
-    match (bus, net.is_empty()) {
-        (None, false) => Ok(vec![net.clone()]),
-        (Some(Bus::Net(b)), true) => {
-            *net = b.clone();
-            Ok(vec![b.clone()])
+/// A watch or drive entry's paths, from its net.
+fn parts(net: &mut String, spec: &NetSpec, name: &Option<String>) -> Result<Vec<String>, String> {
+    match spec {
+        NetSpec::Path(path) => {
+            *net = path.clone();
+            Ok(vec![path.clone()])
         }
-        (Some(Bus::List(list)), true) => {
+        NetSpec::List(list) => {
             *net = format!("{{{}}}", list.join(", "));
             if list.len() < 2 {
                 return Err(format!(
-                    "The bus {net} combines fewer than two nets: use net for one."
+                    "The net list {net} has fewer than two members: name a single net as a string."
                 ));
             }
             if name.is_none() {
                 return Err(format!(
-                    "The bus {net} needs a name, as it combines several nets."
+                    "The net list {net} needs a name, as it combines several nets."
                 ));
             }
             Ok(list.clone())
         }
-        (Some(_), false) => Err(format!(
-            "{net:?}: give net (one bit) or bus (two bits or more), not both."
-        )),
-        (None, true) => Err(format!(
-            "A {what} entry names no net: give net (one bit) or bus (two bits or more)."
-        )),
     }
 }
 
@@ -386,7 +365,7 @@ name = "blink_force"
 mode = "override"
 
 [[watch]]
-bus = "main.count"
+net = "main.count"
 name = "counter"
 format = "dec"
 
@@ -394,7 +373,7 @@ format = "dec"
 net = "main.gen_lane[2].u_lane.err"
 
 [[watch]]
-bus = ["pin.21", "pin.20"]
+net = ["pin.21", "pin.20"]
 name = "two_pins"
 "#,
         )
@@ -471,23 +450,23 @@ name = "two_pins"
     }
 
     #[test]
-    fn net_or_bus() {
+    fn net_is_a_path_or_a_list() {
         let p = |e: &str| {
             parse_json(&format!(
                 r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"watch":[{e}]}}"#
             ))
         };
-        let c = p(r#"{"bus":"main.count"}"#).unwrap();
+        let c = p(r#"{"net":"main.count"}"#).unwrap();
         assert_eq!(
-            (c.watch[0].net.as_str(), c.watch[0].is_bus()),
-            ("main.count", true)
+            (c.watch[0].net.as_str(), c.watch[0].is_list()),
+            ("main.count", false)
         );
+        assert!(p(r#"{"name":"x"}"#).unwrap_err().contains("net"));
         assert!(
             p(r#"{"net":"main.a","bus":"main.a"}"#)
                 .unwrap_err()
-                .contains("not both")
+                .contains("bus")
         );
-        assert!(p(r#"{"name":"x"}"#).unwrap_err().contains("names no net"));
     }
 
     #[test]
@@ -497,21 +476,21 @@ name = "two_pins"
                 r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"{io}":[{e}]}}"#
             ))
         };
-        let c = p("watch", r#"{"bus":["pin.19","main.a"],"name":"x"}"#).unwrap();
+        let c = p("watch", r#"{"net":["pin.19","main.a"],"name":"x"}"#).unwrap();
         assert_eq!(c.watch[0].parts, vec!["pin.19", "main.a"]);
         assert_eq!(c.watch[0].net, "{pin.19, main.a}");
-        let c = p("drive", r#"{"bus":["main.a","main.b"],"name":"y"}"#).unwrap();
+        let c = p("drive", r#"{"net":["main.a","main.b"],"name":"y"}"#).unwrap();
         assert!(c.drive[0].is_list());
         for (io, e, why) in [
-            ("watch", r#"{"bus":["main.a","main.b"]}"#, "needs a name"),
+            ("watch", r#"{"net":["main.a","main.b"]}"#, "needs a name"),
             (
                 "watch",
-                r#"{"bus":["main.a"],"name":"x"}"#,
+                r#"{"net":["main.a"],"name":"x"}"#,
                 "fewer than two",
             ),
             (
                 "drive",
-                r#"{"bus":["main.a","main.a"],"name":"y"}"#,
+                r#"{"net":["main.a","main.a"],"name":"y"}"#,
                 "two drive entries",
             ),
         ] {

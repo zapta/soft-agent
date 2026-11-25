@@ -815,28 +815,6 @@ fn layout(
 ) -> Result<DebugMap, ToolError> {
     let mut inputs = Vec::new();
     let mut offset = 0;
-    let shape = |net: &str, bus: bool, width: usize| -> Result<(), ToolError> {
-        let wrong = match (bus, width) {
-            (false, w) if w != 1 => Some(format!("is {w} bits: name it with bus, not net")),
-            (true, 1) => Some("is 1 bit: name it with net, not bus".to_string()),
-            _ => None,
-        };
-        match wrong {
-            Some(why) => Err(ToolError::new(
-                Category::Design,
-                format!(
-                    "{}: {} {why}.",
-                    input.debug_file,
-                    if net.starts_with(PIN_PREFIX) || net.starts_with('{') {
-                        net.to_string()
-                    } else {
-                        format!("{}.{net}", input.top_module)
-                    }
-                ),
-            )),
-            None => Ok(()),
-        }
-    };
     // A list combines one-bit nets: each member must be one.
     let members_one_bit = |list: &str, is_list: bool, parts: &[String]| -> Result<(), ToolError> {
         if !is_list {
@@ -853,7 +831,7 @@ fn layout(
                 return Err(ToolError::new(
                     Category::Design,
                     format!(
-                        "{}: the bus {list} lists {path}, which is {w} bits. A bus list combines one-bit nets: list its bits' nets, or name the whole bus with bus.",
+                        "{}: the bus {list} lists {path}, which is {w} bits. A net list combines one-bit nets: list its bits' nets, or name the whole bus as one net.",
                         input.debug_file
                     ),
                 ));
@@ -864,9 +842,8 @@ fn layout(
     for i in &config.watch {
         members_one_bit(&i.net, i.is_list(), &i.parts)?;
         let width = i.parts.iter().map(|p| design.widths[p]).sum();
-        shape(&i.net, i.is_bus(), width)?;
-        let members = match &i.bus {
-            Some(config::Bus::List(list)) => list.clone(),
+        let members = match &i.spec {
+            config::NetSpec::List(list) => list.clone(),
             _ => Vec::new(),
         };
         inputs.push(MapWatch {
@@ -886,9 +863,8 @@ fn layout(
     for o in &config.drive {
         members_one_bit(&o.net, o.is_list(), &o.parts)?;
         let width = o.parts.iter().map(|p| design.widths[p]).sum();
-        shape(&o.net, o.is_bus(), width)?;
-        let members = match &o.bus {
-            Some(config::Bus::List(list)) => list.clone(),
+        let members = match &o.spec {
+            config::NetSpec::List(list) => list.clone(),
             _ => Vec::new(),
         };
         let enable_bit = (o.mode == DriveMode::Override).then(|| {

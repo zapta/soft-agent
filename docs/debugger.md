@@ -131,7 +131,7 @@ mode = "override"
 
 [[watch]]
 name = "counter"
-bus = "main.count"
+net = "main.count"
 format = "dec"
 
 [[watch]]
@@ -139,7 +139,7 @@ name = "blink"
 net = "main.blink"
 
 [[watch]]
-bus = "main.u_ctrl.state"
+net = "main.u_ctrl.state"
 ```
 
 - `#:schema`: an optional first line naming the schema, for editors
@@ -167,13 +167,13 @@ bus = "main.u_ctrl.state"
 
   `baud` is optional and defaults to 115200. The debug map records the
   resource and the pins it resolved to.
-- `net` or `bus`, in each watch and drive entry: `net` names a one-bit net and
-  `bus` a net of two bits or more, so the file shows each one's shape. Give
-  exactly one. The build checks it against the design: a 23-bit counter
-  named with `net` is an error that says it is 23 bits.
-- A bus can also be a list that combines one-bit nets and pins into one
-  bus, for watch and drive alike: `{ "bus": ["pin.21", "pin.20",
-  "pin.19", "pin.18"], "name": "switches_n" }`. The first member is the
+- `net`, in each watch and drive entry: the net, of any width, by its
+  path (`main.u_counter.count`, 23 bits, or `main.blink`, one); its width
+  comes from the design. Until 2026-11-25 one-bit nets used `net` and
+  wider ones `bus`; the two are now one key.
+- A `net` can also be a list that combines one-bit nets and pins into one
+  bus, for watch and drive alike: `net = ["pin.21", "pin.20", "pin.19",
+  "pin.18"]` with `name = "switches_n"`. The first member is the
   most significant bit, as in a Verilog concatenation, so `pin.18` is bit 0
   here. Each member must be one bit, and a list needs at least two members
   and a `name`. A drive list's nets share one override enable, so they
@@ -213,7 +213,7 @@ over a net that the design already drives.
 
 | Option | How it looks | For | Against |
 | --- | --- | --- | --- |
-| A. Names in the file (version 1) | `"bus": "main.u_ctrl.state"` | No design edits at all (R3); one place to see what is debugged | Names break when code is renamed; synthesis renames and removes nets, so the build must keep them alive and say when it can't (R9) |
+| A. Names in the file (version 1) | `net = "main.u_ctrl.state"` | No design edits at all (R3); one place to see what is debugged | Names break when code is renamed; synthesis renames and removes nets, so the build must keep them alive and say when it can't (R9) |
 | B. Attributes in the design (later) | `(* logix_debug = "watch" *) reg [3:0] state;` | Travels with the code, survives renames; a normal build ignores unknown attributes | Edits the design; attributes alone don't say the host name or write mode unless their value grows a small syntax |
 | C. Probe modules in the design (later) | `logix_probe #(.NAME("state")) p (.value(state));` and `logix_source #(.NAME("en")) s (.design(en_logic), .value(en));` | Explicit and simulatable: a testbench sees the same pass-through; a write is a clean mux the designer placed | A normal build needs the probe modules' pass-through file too; most design edits of the three |
 
