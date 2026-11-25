@@ -55,9 +55,10 @@
   #tip {
     position: fixed; z-index: 10; pointer-events: none; display: none;
     padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line);
-    background: var(--panel); color: var(--text); font: 12px var(--mono);
-    box-shadow: 0 2px 8px rgb(0 0 0 / .15); white-space: nowrap;
+    background: var(--panel); color: var(--text); font: 12px system-ui, -apple-system, "Segoe UI", sans-serif;
+    box-shadow: 0 2px 8px rgb(0 0 0 / .15); max-width: 360px;
   }
+  #tip.mono { font-family: var(--mono); }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
   .pill.on { color: var(--on); border-color: var(--on); }
   .pill.off { color: var(--off); }
@@ -167,6 +168,17 @@
     return td;
   }
 
+  // A drive row's mode, with what it means as its tooltip.
+  const MODE_TIPS = {
+    override: "The design drives this net. Drive takes it over with your value; Release gives it back to the design.",
+    register: "Only the debugger drives this net: it holds the last value you drove, from 0 at start. There is nothing to release.",
+  };
+  function modeCell(mode) {
+    const td = cell(mode);
+    if (MODE_TIPS[mode]) td.dataset.tip = MODE_TIPS[mode];
+    return td;
+  }
+
   // Each watched row's format: the one chosen in its menu (remembered by
   // name in this browser), else the debug file's, else binary for one bit
   // and hex for more.
@@ -209,6 +221,7 @@
     const td = e.target.closest?.("[data-tip]");
     if (!td) { tip.style.display = "none"; return; }
     tip.textContent = td.dataset.tip;
+    tip.classList.toggle("mono", td.classList.contains("name"));
     tip.style.display = "block";
   });
   document.addEventListener("mousemove", (e) => {
@@ -268,7 +281,6 @@
         inp.placeholder = "0x.., 0b.. or 12";
         const b = document.createElement("button");
         b.textContent = "Drive";
-        b.className = "primary";
         const go = () => inp.value.trim() && write({ name: o.name, value: inp.value.trim() });
         b.onclick = go;
         inp.onkeydown = (e) => { if (e.key === "Enter") go(); };
@@ -284,7 +296,7 @@
       }
       ctl.append(box);
       tr.append(nameCell(o.name, o.net), cell(String(o.width), "num"),
-        cell(o.mode), state, ctl);
+        modeCell(o.mode), state, ctl);
       ob.append(tr);
     }
     $("no-watch").hidden = info.watch.length > 0;
