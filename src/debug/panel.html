@@ -231,7 +231,7 @@
     if (/^0[xb]/i.test(t) || fmt === "dec") return t;
     return (fmt === "hex" ? "0x" : "0b") + t;
   }
-  const PLACEHOLDERS = { hex: "hex, such as 1f", dec: "decimal, such as 31", bin: "binary, such as 11111" };
+  const PLACEHOLDERS = { hex: "hex", dec: "decimal", bin: "binary" };
 
   // The value cell is as wide as the format's longest value for the net,
   // so the column keeps its width as the value changes.
