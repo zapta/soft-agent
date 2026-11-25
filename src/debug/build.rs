@@ -206,16 +206,28 @@ pub async fn run(
     let id = u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]);
     map.build_id = format!("{id:08x}");
 
-    let top_v = debug_top(&input.top_module, &design, &map, &link, id);
+    let parts: Vec<Vec<String>> = config.input.iter().map(|i| i.parts.clone()).collect();
+    let out_parts: Vec<Vec<String>> = config.output.iter().map(|o| o.parts.clone()).collect();
+    let top_v = debug_top(
+        &input.top_module,
+        &design,
+        &map,
+        &parts,
+        &out_parts,
+        &link,
+        id,
+    );
     write(&gen_dir.join("debug_top.v"), &top_v)?;
     // The map names nets as the debug file does, from the top module.
     for i in &mut map.inputs {
-        if !i.net.starts_with(PIN_PREFIX) {
+        if !i.net.starts_with(PIN_PREFIX) && i.members.is_empty() {
             i.net = format!("{}.{}", input.top_module, i.net);
         }
     }
     for o in &mut map.outputs {
-        o.net = format!("{}.{}", input.top_module, o.net);
+        if o.members.is_empty() {
+            o.net = format!("{}.{}", input.top_module, o.net);
+        }
     }
     write(&gen_dir.join("logix_debugger.v"), DEBUGGER_V)?;
     let pcf = format!(
@@ -290,8 +302,8 @@ fn pin_ports(
     pcf_name: &str,
 ) -> Result<BTreeMap<String, String>, ToolError> {
     let mut out = BTreeMap::new();
-    for i in &config.input {
-        let Some(pin) = i.net.strip_prefix(PIN_PREFIX) else {
+    for part in config.input.iter().flat_map(|i| &i.parts) {
+        let Some(pin) = part.strip_prefix(PIN_PREFIX) else {
             continue;
         };
         let port = pins
@@ -302,8 +314,7 @@ fn pin_ports(
                 ToolError::new(
                     Category::Design,
                     format!(
-                        "{}: {pcf_name} puts no port on pin {pin}. A pin path reads the port the constraint file places there.",
-                        i.net
+                        "{part}: {pcf_name} puts no port on pin {pin}. A pin path reads the port the constraint file places there."
                     ),
                 )
             })?;
@@ -311,7 +322,7 @@ fn pin_ports(
             Some((base, bit)) => format!("{}[{bit}", vid(base)),
             None => vid(&port),
         };
-        out.insert(i.net.clone(), expr);
+        out.insert(part.clone(), expr);
     }
     Ok(out)
 }
@@ -326,11 +337,10 @@ fn in_top(mut config: DebugConfig, top: &str) -> Result<DebugConfig, String> {
                 .into(),
         );
     }
-    for o in &config.output {
-        if o.net.starts_with(PIN_PREFIX) {
+    for p in config.output.iter().flat_map(|o| &o.parts) {
+        if p.starts_with(PIN_PREFIX) {
             return Err(format!(
-                "{}: version 1 reads pins but can't drive them. Drive an internal net instead.",
-                o.net
+                "{p}: version 1 reads pins but can't drive them. Drive an internal net instead."
             ));
         }
     }
@@ -354,10 +364,24 @@ fn in_top(mut config: DebugConfig, top: &str) -> Result<DebugConfig, String> {
         Ok(())
     };
     for i in &mut config.input {
-        strip(&mut i.net, &mut i.name)?;
+        if i.is_list() {
+            for p in &mut i.parts {
+                strip(p, &mut None)?;
+            }
+        } else {
+            strip(&mut i.net, &mut i.name)?;
+            i.parts = vec![i.net.clone()];
+        }
     }
     for o in &mut config.output {
-        strip(&mut o.net, &mut o.name)?;
+        if o.is_list() {
+            for p in &mut o.parts {
+                strip(p, &mut None)?;
+            }
+        } else {
+            strip(&mut o.net, &mut o.name)?;
+            o.parts = vec![o.net.clone()];
+        }
     }
     Ok(config)
 }
@@ -524,15 +548,17 @@ pub fn pcf_pins(text: &str) -> BTreeMap<String, String> {
 /// how.
 fn unique_nets(config: &DebugConfig) -> Vec<(String, Option<OutputMode>)> {
     let mut nets: Vec<(String, Option<OutputMode>)> = Vec::new();
-    for i in &config.input {
-        if !nets.iter().any(|(n, _)| *n == i.net) {
-            nets.push((i.net.clone(), None));
+    for p in config.input.iter().flat_map(|i| &i.parts) {
+        if !nets.iter().any(|(n, _)| n == p) {
+            nets.push((p.clone(), None));
         }
     }
     for o in &config.output {
-        match nets.iter_mut().find(|(n, _)| *n == o.net) {
-            Some((_, m)) => *m = Some(o.mode),
-            None => nets.push((o.net.clone(), Some(o.mode))),
+        for p in &o.parts {
+            match nets.iter_mut().find(|(n, _)| n == p) {
+                Some((_, m)) => *m = Some(o.mode),
+                None => nets.push((p.clone(), Some(o.mode))),
+            }
         }
     }
     nets
@@ -573,7 +599,7 @@ async fn prepass(
 ) -> Result<Design, ToolError> {
     let q = |p: &Path| format!("\"{}\"", p.to_string_lossy());
     let mut script = format!(
-        "read_verilog -lib +/ice40/cells_sim.v; hierarchy -top {top}; proc; flatten; \
+        "read_verilog -lib +/ice40/cells_sim.v; hierarchy -top {top}; proc; flatten; opt_clean; \
          select {top}; write_json -selected {pre}; select -clear; ",
         top = input.top_module,
         pre = q(&gen_dir.join("pre.json"))
@@ -670,7 +696,11 @@ async fn prepass(
             ));
         }
         let found = port(net).filter(|p| is_port || p.direction == "output");
-        let cut_ok = mode.is_none() || port(&format!("{net}.i")).is_some();
+        // A cut net must keep its driver: had the cut put the net's loads
+        // on its driver's side, the two ports would share their bits.
+        let bits = |name: &str| module["ports"][name]["bits"].clone();
+        let cut_ok = mode.is_none()
+            || (port(&format!("{net}.i")).is_some() && bits(net) != bits(&format!("{net}.i")));
         match found {
             Some(p) if cut_ok => {
                 widths.insert(net.clone(), p.width);
@@ -756,7 +786,7 @@ fn layout(
                 format!(
                     "{}: {} {why}.",
                     input.debug_file,
-                    if net.starts_with(PIN_PREFIX) {
+                    if net.starts_with(PIN_PREFIX) || net.starts_with('{') {
                         net.to_string()
                     } else {
                         format!("{}.{net}", input.top_module)
@@ -766,12 +796,42 @@ fn layout(
             None => Ok(()),
         }
     };
+    // A list combines one-bit nets: each member must be one.
+    let members_one_bit = |list: &str, is_list: bool, parts: &[String]| -> Result<(), ToolError> {
+        if !is_list {
+            return Ok(());
+        }
+        for p in parts {
+            let w = design.widths[p];
+            if w != 1 {
+                let path = if p.starts_with(PIN_PREFIX) {
+                    p.clone()
+                } else {
+                    format!("{}.{p}", input.top_module)
+                };
+                return Err(ToolError::new(
+                    Category::Design,
+                    format!(
+                        "{}: the bus {list} lists {path}, which is {w} bits. A bus list combines one-bit nets: list its bits' nets, or name the whole bus with bus.",
+                        input.debug_file
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    };
     for i in &config.input {
-        let width = design.widths[&i.net];
-        shape(&i.net, !i.bus.is_empty(), width)?;
+        members_one_bit(&i.net, i.is_list(), &i.parts)?;
+        let width = i.parts.iter().map(|p| design.widths[p]).sum();
+        shape(&i.net, i.is_bus(), width)?;
+        let members = match &i.bus {
+            Some(config::Bus::List(list)) => list.clone(),
+            _ => Vec::new(),
+        };
         inputs.push(MapInput {
             name: i.name.clone().unwrap_or_else(|| i.net.clone()),
             net: i.net.clone(),
+            members,
             width,
             offset,
         });
@@ -782,8 +842,13 @@ fn layout(
     let mut offset = 0;
     let mut enables = 0;
     for o in &config.output {
-        let width = design.widths[&o.net];
-        shape(&o.net, !o.bus.is_empty(), width)?;
+        members_one_bit(&o.net, o.is_list(), &o.parts)?;
+        let width = o.parts.iter().map(|p| design.widths[p]).sum();
+        shape(&o.net, o.is_bus(), width)?;
+        let members = match &o.bus {
+            Some(config::Bus::List(list)) => list.clone(),
+            _ => Vec::new(),
+        };
         let enable_bit = (o.mode == OutputMode::Override).then(|| {
             enables += 1;
             enables - 1
@@ -793,6 +858,7 @@ fn layout(
             net: o.net.clone(),
             width,
             offset,
+            members,
             mode: o.mode.as_str().into(),
             enable_bit,
         });
@@ -843,7 +909,17 @@ fn vid(name: &str) -> String {
     }
 }
 
-fn debug_top(user_top: &str, design: &Design, map: &DebugMap, link: &Link, id: u32) -> String {
+/// `parts`, `out_parts`: each input's and output's paths, most significant
+/// first (as the pre-pass names them).
+fn debug_top(
+    user_top: &str,
+    design: &Design,
+    map: &DebugMap,
+    parts: &[Vec<String>],
+    out_parts: &[Vec<String>],
+    link: &Link,
+    id: u32,
+) -> String {
     let read_w = map.inputs.iter().map(|i| i.width).sum::<usize>();
     let write_w = map.outputs.iter().map(|o| o.width).sum::<usize>();
     let enables = map
@@ -856,12 +932,7 @@ fn debug_top(user_top: &str, design: &Design, map: &DebugMap, link: &Link, id: u
     // One wire per exposed design net, named by its order.
     let mut wires: Vec<(String, usize)> = Vec::new();
     let mut wire_of = BTreeMap::new();
-    for net in map
-        .inputs
-        .iter()
-        .map(|i| &i.net)
-        .chain(map.outputs.iter().map(|o| &o.net))
-    {
+    for net in parts.iter().flatten().chain(out_parts.iter().flatten()) {
         if !own(net) && !design.pin_ports.contains_key(net) && !wire_of.contains_key(net) {
             wire_of.insert(net.clone(), format!("logix_dbg_net{}", wires.len()));
             wires.push((net.clone(), design.widths[net]));
@@ -909,13 +980,19 @@ fn debug_top(user_top: &str, design: &Design, map: &DebugMap, link: &Link, id: u
     for (net, _) in &wires {
         conns.push(format!(".{}({})", vid(net), wire_of[net]));
     }
-    for o in &map.outputs {
-        let value = format!("logix_dbg_wr[{}:{}]", o.offset + o.width - 1, o.offset);
-        let driven = match o.enable_bit {
-            Some(b) => format!("logix_dbg_en[{b}] ? {value} : {}", signal(&o.net)),
-            None => value,
-        };
-        conns.push(format!(".{}({driven})", vid(&format!("{}.i", o.net))));
+    for (o, ps) in map.outputs.iter().zip(out_parts) {
+        // The parts take the output's bits, the first the most significant.
+        let mut top_bit = o.offset + o.width;
+        for p in ps {
+            let w = design.widths[p];
+            let value = format!("logix_dbg_wr[{}:{}]", top_bit - 1, top_bit - w);
+            top_bit -= w;
+            let driven = match o.enable_bit {
+                Some(b) => format!("logix_dbg_en[{b}] ? {value} : {}", signal(p)),
+                None => value,
+            };
+            conns.push(format!(".{}({driven})", vid(&format!("{p}.i"))));
+        }
     }
     let _ = writeln!(
         v,
@@ -925,11 +1002,12 @@ fn debug_top(user_top: &str, design: &Design, map: &DebugMap, link: &Link, id: u
     );
 
     // The read space, first net in the low bits.
-    let parts: Vec<String> = map.inputs.iter().rev().map(|i| signal(&i.net)).collect();
-    let rd = if parts.is_empty() {
+    // Each input's parts are already most significant first.
+    let bits: Vec<String> = parts.iter().rev().flatten().map(|p| signal(p)).collect();
+    let rd = if bits.is_empty() {
         "1'b0".to_string()
     } else {
-        format!("{{{}}}", parts.join(", "))
+        format!("{{{}}}", bits.join(", "))
     };
     let _ = writeln!(v, "  assign logix_dbg_rd = {rd};\n");
     let _ = writeln!(

@@ -80,12 +80,50 @@ pub struct InputNet {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub net: String,
     /// A net of two bits or more, named as for net, such as
-    /// main.u_ctrl.state. Give net or bus.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub bus: String,
+    /// main.u_ctrl.state; or a list of one-bit nets and pins combined into one bus,
+    /// such as ["pin.21", "pin.20", "pin.19", "pin.18"], the first the most
+    /// significant, as in a Verilog concatenation (a list needs a name).
+    /// Give net or bus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus: Option<Bus>,
     /// The host's name for it. Defaults to the net's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The paths it reads, most significant first: the net, or the list's
+    /// members. Set by parse.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub parts: Vec<String>,
+}
+
+impl InputNet {
+    /// True when the file named it with bus.
+    pub fn is_bus(&self) -> bool {
+        self.bus.is_some()
+    }
+
+    /// True for a bus combined from a list.
+    pub fn is_list(&self) -> bool {
+        matches!(self.bus, Some(Bus::List(_)))
+    }
+}
+
+impl OutputNet {
+    pub fn is_bus(&self) -> bool {
+        self.bus.is_some()
+    }
+
+    pub fn is_list(&self) -> bool {
+        matches!(self.bus, Some(Bus::List(_)))
+    }
+}
+
+/// A bus: one net, or a list of one-bit nets and pins combined.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Bus {
+    Net(String),
+    List(Vec<String>),
 }
 
 /// A net the debugger drives.
@@ -95,12 +133,18 @@ pub struct OutputNet {
     /// A one-bit net, named as for inputs. Give net or bus.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub net: String,
-    /// A net of two bits or more, named as for inputs. Give net or bus.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub bus: String,
+    /// A net of two bits or more, or a list of one-bit nets combined into a
+    /// bus, as for inputs; a list's nets are driven and released together.
+    /// Give net or bus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus: Option<Bus>,
     /// The host's name for it. Defaults to the net's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The paths it drives, most significant first. Set by parse.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub parts: Vec<String>,
     /// override: the debugger can take over a net the design drives, and
     /// release it back. register: the debugger always drives it. Defaults
     /// to override.
@@ -129,29 +173,13 @@ impl OutputMode {
 pub fn parse(text: &str) -> Result<DebugConfig, String> {
     let json = strip_comments(text);
     let mut config: DebugConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    // net or bus: after this, net holds the path either way, and bus stays
-    // set for a bus.
-    for (net, bus) in config
-        .input
-        .iter_mut()
-        .map(|i| (&mut i.net, &i.bus))
-        .chain(config.output.iter_mut().map(|o| (&mut o.net, &o.bus)))
-    {
-        match (net.is_empty(), bus.is_empty()) {
-            (true, false) => *net = bus.clone(),
-            (false, true) => {}
-            (false, false) => {
-                return Err(format!(
-                    "{net:?} and {bus:?}: give net (one bit) or bus (two bits or more), not both."
-                ));
-            }
-            (true, true) => {
-                return Err(
-                    "An input or output names no net: give net (one bit) or bus (two bits or more)."
-                        .into(),
-                );
-            }
-        }
+    // net or bus: after this, net holds the path either way (for a list,
+    // the list as text), parts the paths, and bus stays set for a bus.
+    for i in &mut config.input {
+        i.parts = parts(&mut i.net, &i.bus, &i.name, "input")?;
+    }
+    for o in &mut config.output {
+        o.parts = parts(&mut o.net, &o.bus, &o.name, "output")?;
     }
     if let Some(s) = &config.schema
         && s != SCHEMA_URL
@@ -178,13 +206,31 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
         return Err("The file names no nets: add some to input or output.".into());
     }
     let mut names = std::collections::BTreeSet::new();
+    for p in config
+        .input
+        .iter()
+        .flat_map(|i| &i.parts)
+        .chain(config.output.iter().flat_map(|o| &o.parts))
+    {
+        check_net(p)?;
+    }
+    let mut driven = std::collections::BTreeSet::new();
+    for p in config.output.iter().flat_map(|o| &o.parts) {
+        if !driven.insert(p) {
+            return Err(format!(
+                "{p} is driven by two outputs: drive each net from one output."
+            ));
+        }
+    }
     for (net, name) in config
         .input
         .iter()
         .map(|i| (&i.net, &i.name))
         .chain(config.output.iter().map(|o| (&o.net, &o.name)))
     {
-        check_net(net)?;
+        if !net.starts_with('{') {
+            check_net(net)?;
+        }
         let host = name.as_deref().unwrap_or(net);
         if host.is_empty() {
             return Err(format!("The name of net {net:?} is empty."));
@@ -202,6 +248,42 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
         return Err(format!("clock_mhz {mhz} isn't a clock frequency."));
     }
     Ok(config)
+}
+
+/// An input's or output's paths, from net or bus.
+fn parts(
+    net: &mut String,
+    bus: &Option<Bus>,
+    name: &Option<String>,
+    what: &str,
+) -> Result<Vec<String>, String> {
+    match (bus, net.is_empty()) {
+        (None, false) => Ok(vec![net.clone()]),
+        (Some(Bus::Net(b)), true) => {
+            *net = b.clone();
+            Ok(vec![b.clone()])
+        }
+        (Some(Bus::List(list)), true) => {
+            *net = format!("{{{}}}", list.join(", "));
+            if list.len() < 2 {
+                return Err(format!(
+                    "The bus {net} combines fewer than two nets: use net for one."
+                ));
+            }
+            if name.is_none() {
+                return Err(format!(
+                    "The bus {net} needs a name, as it combines several nets."
+                ));
+            }
+            Ok(list.clone())
+        }
+        (Some(_), false) => Err(format!(
+            "{net:?}: give net (one bit) or bus (two bits or more), not both."
+        )),
+        (None, true) => Err(format!(
+            "An {what} names no net: give net (one bit) or bus (two bits or more)."
+        )),
+    }
 }
 
 /// Version 1's naming rules: an instance path then a net, whole nets only.
@@ -390,8 +472,8 @@ mod tests {
         };
         let c = p(r#"{"bus":"main.count"}"#).unwrap();
         assert_eq!(
-            (c.input[0].net.as_str(), c.input[0].bus.as_str()),
-            ("main.count", "main.count")
+            (c.input[0].net.as_str(), c.input[0].is_bus()),
+            ("main.count", true)
         );
         assert!(
             p(r#"{"net":"main.a","bus":"main.a"}"#)
@@ -399,6 +481,36 @@ mod tests {
                 .contains("not both")
         );
         assert!(p(r#"{"name":"x"}"#).unwrap_err().contains("names no net"));
+    }
+
+    #[test]
+    fn bus_lists() {
+        let p = |io: &str, e: &str| {
+            parse(&format!(
+                r#"{{"clock":"c","uplink":{{"kind":"uart","resource":"uart"}},"{io}":[{e}]}}"#
+            ))
+        };
+        let c = p("input", r#"{"bus":["pin.19","main.a"],"name":"x"}"#).unwrap();
+        assert_eq!(c.input[0].parts, vec!["pin.19", "main.a"]);
+        assert_eq!(c.input[0].net, "{pin.19, main.a}");
+        let c = p("output", r#"{"bus":["main.a","main.b"],"name":"y"}"#).unwrap();
+        assert!(c.output[0].is_list());
+        for (io, e, why) in [
+            ("input", r#"{"bus":["main.a","main.b"]}"#, "needs a name"),
+            (
+                "input",
+                r#"{"bus":["main.a"],"name":"x"}"#,
+                "fewer than two",
+            ),
+            (
+                "output",
+                r#"{"bus":["main.a","main.a"],"name":"y"}"#,
+                "two outputs",
+            ),
+        ] {
+            let err = p(io, e).unwrap_err();
+            assert!(err.contains(why), "{e}: {err}");
+        }
     }
 
     #[test]

@@ -133,8 +133,12 @@ pub struct DebugMap {
 pub struct MapInput {
     /// The host's name for it.
     pub name: String,
-    /// The net in the design.
+    /// The net in the design; for a bus combined from a list, the list,
+    /// as {main.a, pin.18}.
     pub net: String,
+    /// A combined bus's members, most significant first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
     /// Its width in bits.
     pub width: usize,
     /// Its first bit in the read space.
@@ -145,7 +149,11 @@ pub struct MapInput {
 #[serde(deny_unknown_fields)]
 pub struct MapOutput {
     pub name: String,
+    /// The net, or a combined bus's list, as for inputs.
     pub net: String,
+    /// A combined bus's members, most significant first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
     pub width: usize,
     /// Its first bit in the write space.
     pub offset: usize,

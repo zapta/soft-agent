@@ -109,8 +109,15 @@
           "type": "string"
         },
         "bus": {
-          "description": "A net of two bits or more, named as for net, such as\nmain.u_ctrl.state. Give net or bus.",
-          "type": "string"
+          "description": "A net of two bits or more, named as for net, such as\nmain.u_ctrl.state; or a list of one-bit nets and pins combined into one bus,\nsuch as [\"pin.21\", \"pin.20\", \"pin.19\", \"pin.18\"], the first the most\nsignificant, as in a Verilog concatenation (a list needs a name).\nGive net or bus.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bus"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "name": {
           "description": "The host's name for it. Defaults to the net's path.",
@@ -122,6 +129,20 @@
       },
       "additionalProperties": false
     },
+    "Bus": {
+      "description": "A bus: one net, or a list of one-bit nets and pins combined.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
     "OutputNet": {
       "description": "A net the debugger drives.",
       "type": "object",
@@ -131,8 +152,15 @@
           "type": "string"
         },
         "bus": {
-          "description": "A net of two bits or more, named as for inputs. Give net or bus.",
-          "type": "string"
+          "description": "A net of two bits or more, or a list of one-bit nets combined into a\nbus, as for inputs; a list's nets are driven and released together.\nGive net or bus.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bus"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "name": {
           "description": "The host's name for it. Defaults to the net's path.",

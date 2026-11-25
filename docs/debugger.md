@@ -156,6 +156,14 @@ An example, for the iCESugar v1.5:
   `bus` a net of two bits or more, so the file shows each one's shape. Give
   exactly one. The build checks it against the design: a 23-bit counter
   named with `net` is an error that says it is 23 bits.
+- A bus can also be a list that combines one-bit nets and pins into one
+  bus, for inputs and outputs alike: `{ "bus": ["pin.21", "pin.20",
+  "pin.19", "pin.18"], "name": "switches_n" }`. The first member is the
+  most significant bit, as in a Verilog concatenation, so `pin.18` is bit 0
+  here. Each member must be one bit, and a list needs at least two members
+  and a `name`. An output list's nets share one override enable, so they
+  are taken over and released together, and pins can't be in an output
+  list. A net can be driven by only one output.
 - `input` and `output`, from the debugger's side, as AMD's VIO names
   probe\_in and probe\_out: an input is a net it reads, an output a net it
   drives. `name` is the host's name for it (defaults to the net's path); widths
@@ -450,6 +458,11 @@ of a variable shift, and register the reply byte.
   file), `protocol.rs` (frames and the debug map), `build.rs`
   (`debug_build`), `session.rs` (the session tools), and `hdl/` (the
   debugger's Verilog and its testbench).
+- **Aliases:** the pre-pass runs `opt_clean` after `flatten`, so a net
+  that is only an alias (`wire red_on = ~sw_n[0];`) is driven by its cell
+  directly. Without it, `expose -cut` connected such a net to its own cut
+  side, a combinational loop. The build also refuses any cut net whose
+  driver and loads still share bits.
 - **Families:** iCE40 only. The pre-pass loads the family's cell library
   (`+/ice40/cells_sim.v`) as black boxes, so `expose -cut` knows which ports of
   primitives such as `SB_RGBA_DRV` are inputs. Without it, a cut net kept
