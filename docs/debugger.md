@@ -561,8 +561,8 @@ adapter.
 
 ## Path into Logix Engine later
 
-If the feature moves, the file format, debug map, protocol and tool names
-move unchanged; only where the code lives changes. To keep that easy:
+The feature moves (Q12, 2026-11-26): the file format, debug map, protocol
+and tool names move unchanged; only where the code lives changes. To keep that easy:
 
 - **Follow the engine's tool conventions now:** self-contained requests,
   absolute paths, errors as `ToolError` data with categories, schemas
@@ -574,6 +574,18 @@ move unchanged; only where the code lives changes. To keep that easy:
 - **Name it neutrally:** `debug_build` could become a `debug_file` field of
   the engine's `build`, and the other tools keep their names. Avoid
   `soft_agent` in any name a host sees.
+- **The panel** (Q13): a Logix Viewer app of its own, a third beside
+  Logix Waveforms and Logix Diagrams, with its own name (such as Logix
+  Debugger) and dock icon, one window per session, titled as the others
+  are. A host with a window of its own, such as Logix IDE, shows the
+  panel's page itself instead (`open` false), as it does the waveform
+  viewer and the diagram. Unlike those pages, the panel is live: it reads
+  and drives the board while it is open, so it needs a live channel to the
+  engine's session, which the page contract (`window.logixHost`, version
+  1) doesn't have. Designing that channel, for Logix Viewer and for hosts,
+  is part of the port: today `debug_panel` serves the page from a local
+  web server instead. The app's icon and the Logix Viewer side are
+  logix-core's.
 - **What the engine would need:** a hook for extra synthesis passes in
   `build::synth_script`, or a pre-synthesis step; today soft-agent works
   around its absence (Build integration). Proposing that hook is an engine
@@ -643,9 +655,10 @@ Open as of 2026-11-25, to be gone over one at a time:
   1,000,000 baud: reads, writes, releases, holds and one-clock pulses as
   before, 300 reads with no errors. The other families' examples were
   built, not tested on their boards.
-- [ ] **Where the panel goes.** The engine is a backend for other tools.
-  Decide whether the browser panel moves with it, goes to Logix IDE, or
-  stays here as a reference, with only the session tools in the engine.
+- [x] **Where the panel goes** (decided 2026-11-26, Q13). Into the engine
+  with the rest, as a third Logix Viewer app beside Logix Waveforms and
+  Logix Diagrams, with its own name and dock icon (see Path into Logix
+  Engine later).
 - [ ] **Windows and Linux.** Sessions have run only on macOS. Test them
   with the engine's serial port and driver handling on Windows and Linux.
 - [ ] **Freeze the formats.** Once in the engine, `debug.toml`, the debug
@@ -676,6 +689,8 @@ Open as of 2026-11-25, to be gone over one at a time:
 | Q9 | Where the schema lives? | In this repo, under `schemas/` |
 | Q10 | Naming rules? | Full instance paths starting with the top module (`main.u_ctrl.state`), or `pin.<pin>` for package pins, whole nets, generate names as yosys prints them, no wildcards (see Naming rules) |
 | Q11 | Versions and compatibility before release? | None kept while in early development (the user, 2026-11-26): the protocol started again at version 1 then, and a change may break older builds, which are refused and built again |
+| Q12 | Port the debugger to Logix Engine? | Yes (the user, 2026-11-26): the build, the session tools, the formats and the panel move into the engine |
+| Q13 | Where the panel goes? | Into the engine, as a third Logix Viewer app beside Logix Waveforms and Logix Diagrams, with its own dock icon; hosts such as Logix IDE show its page themselves (the user, 2026-11-26) |
 
 ## First milestone
 
