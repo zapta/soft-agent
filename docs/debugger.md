@@ -467,7 +467,7 @@ move unchanged; only where the code lives changes. To keep that easy:
 | Q4 | Writes: `source` only first, or `override` of driven nets too? | Both, if yosys `expose -cut` works as expected; else `source` first (`source`, as Intel's In-System Sources, was called `register` until 2026-11-25) |
 | Q5 | Debugger clock: always the board clock, or any net? | One clock for the UART and the debugger, the board's clock resource by default; every watched and driven net must be on it |
 | Q6 | The UART when the design uses it too? | Refuse in version 1; console channel later |
-| Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later |
+| Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later. Measured 2026-11-25: both boards reliable at 1,000,000 (see Batches) |
 | Q8 | Several debug files per project, merged? | One file per build request |
 | Q9 | Where the schema lives? | In this repo, under `schemas/` |
 | Q10 | Naming rules? | Full instance paths starting with the top module (`main.u_ctrl.state`), or `pin.<pin>` for package pins, whole nets, generate names as yosys prints them, no wildcards (see Naming rules) |
@@ -567,6 +567,17 @@ of a variable shift, and register the reply byte.
   | --- | --- | --- | --- |
   | Alhambra II (FTDI, 16 ms latency timer) | 16 ms, 62/s (48 ms before batches) | 32 ms (64 ms) | 34 ms (about 100 ms) |
   | iCESugar v1.5 (its DAPLink's USB serial) | 4 ms, 249/s | 6 ms | 9 ms |
+  | Alhambra II at 1,000,000 baud | 16 ms, 63/s | 32 ms | 34 ms |
+  | iCESugar v1.5 at 1,000,000 baud | 1.0 ms, about 1,000/s | 2 ms | 4 ms |
+
+  At 115200 baud a read's bytes take about 4 ms on the wire. That is
+  nearly all of the iCESugar's time, so 1 Mbaud makes it four times
+  faster; on the Alhambra the FTDI timer dominates, so it doesn't change.
+  Both bridges were reliable at 1 Mbaud: 300 reads on the Alhambra and
+  3,300 on the iCESugar, with no errors and no implausible values. With a
+  12 MHz clock the usable fast rates are 1,000,000 (12 clocks a bit,
+  exact), 921,600 and 1,500,000 (8 clocks a bit, the fastest the build
+  accepts).
 
   The FTDI chip holds received bytes up to its latency timer, 16 ms by
   default; lowering it would speed the Alhambra up further, but macOS gives
