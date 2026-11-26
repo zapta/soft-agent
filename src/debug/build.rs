@@ -27,7 +27,7 @@ use logix_engine::state::EngineState;
 use logix_engine::tools::build as engine_build;
 use logix_engine::tools::{Call, EngineTool};
 
-use super::config::{self, DebugConfig, DriveMode};
+use super::config::{self, DebugConfig};
 use super::protocol::{self, DebugMap, MapDrive, MapWatch};
 
 /// The debugger's Verilog, written into each debug build.
@@ -570,20 +570,19 @@ pub fn pcf_pins(text: &str) -> BTreeMap<String, String> {
 
 // --- The pre-pass -----------------------------------------------------------
 
-/// Every net the file names, once, with whether the debugger drives it and
-/// how.
-fn unique_nets(config: &DebugConfig) -> Vec<(String, Option<DriveMode>)> {
-    let mut nets: Vec<(String, Option<DriveMode>)> = Vec::new();
+/// Every net the file names, once, with whether the debugger drives it.
+fn unique_nets(config: &DebugConfig) -> Vec<(String, bool)> {
+    let mut nets: Vec<(String, bool)> = Vec::new();
     for p in config.watch.iter().flat_map(|i| &i.parts) {
         if !nets.iter().any(|(n, _)| n == p) {
-            nets.push((p.clone(), None));
+            nets.push((p.clone(), false));
         }
     }
     for o in &config.drive {
         for p in &o.parts {
             match nets.iter_mut().find(|(n, _)| n == p) {
-                Some((_, m)) => *m = Some(o.mode),
-                None => nets.push((p.clone(), Some(o.mode))),
+                Some((_, d)) => *d = true,
+                None => nets.push((p.clone(), true)),
             }
         }
     }
@@ -617,7 +616,7 @@ fn pattern(net: &str) -> String {
 
 async fn prepass(
     input: &DebugBuildInput,
-    nets: &[(String, Option<DriveMode>)],
+    nets: &[(String, bool)],
     src: &Path,
     gen_dir: &Path,
     bin: &Path,
@@ -638,7 +637,7 @@ async fn prepass(
     }
     let cuts: Vec<String> = nets
         .iter()
-        .filter(|(_, m)| m.is_some())
+        .filter(|(_, d)| *d)
         .map(|(n, _)| pattern(n))
         .collect();
     // A driven net set by a plain connection, such as to a constant, gets a
@@ -721,9 +720,9 @@ async fn prepass(
     };
     let ports: Vec<Port> = own.iter().filter_map(|n| port(n)).collect();
     let mut widths = BTreeMap::new();
-    for (net, mode) in nets {
+    for &(ref net, drives) in nets {
         let is_port = own.contains(net);
-        if is_port && mode.is_some() {
+        if is_port && drives {
             return Err(ToolError::new(
                 Category::Design,
                 format!(
@@ -736,11 +735,11 @@ async fn prepass(
         // A cut net must keep its driver: had the cut put the net's loads
         // on its driver's side, the two ports would share their bits.
         let bits = |name: &str| module["ports"][name]["bits"].clone();
-        let cut_ok = mode.is_none()
+        let cut_ok = !drives
             || (port(&format!("{net}.i")).is_some() && bits(net) != bits(&format!("{net}.i")));
         // A driven net must still reach something, or the debugger would
         // drive nothing.
-        if mode.is_some()
+        if drives
             && cut_ok
             && !used(module, &bits(&format!("{net}.i")), &format!("{net}.i"))
         {
@@ -753,7 +752,7 @@ async fn prepass(
             ));
         }
         // A driven net needs a value of its own for when it is released.
-        if mode.is_some() && cut_ok && !driven(module, &bits(net)) {
+        if drives && cut_ok && !driven(module, &bits(net)) {
             return Err(ToolError::new(
                 Category::Design,
                 format!(
@@ -842,7 +841,7 @@ fn driven(module: &Value, bits: &Value) -> bool {
 /// The pre-pass's failure, in the user's terms.
 fn prepass_error(
     output: &str,
-    nets: &[(String, Option<DriveMode>)],
+    nets: &[(String, bool)],
     input: &DebugBuildInput,
     src: &Path,
 ) -> ToolError {
@@ -942,10 +941,8 @@ fn layout(
             config::NetSpec::List(list) => list.clone(),
             _ => Vec::new(),
         };
-        let enable_bit = (o.mode == DriveMode::Override).then(|| {
-            enables += 1;
-            enables - 1
-        });
+        let enable_bit = enables;
+        enables += 1;
         outputs.push(MapDrive {
             name: o.name.clone().unwrap_or_else(|| o.net.clone()),
             net: o.net.clone(),
@@ -953,19 +950,9 @@ fn layout(
             offset,
             members,
             format: o.format.map(|f| f.as_str().to_string()),
-            mode: o.mode.as_str().into(),
             enable_bit,
         });
         offset += width;
-    }
-    if config
-        .drive
-        .iter()
-        .filter(|o| o.mode == DriveMode::Override)
-        .count()
-        != outputs.iter().filter(|o| o.enable_bit.is_some()).count()
-    {
-        return Err(ToolError::engine("The override enables don't add up."));
     }
     Ok(DebugMap {
         format: protocol::MAP_FORMAT.into(),
@@ -1016,7 +1003,7 @@ fn debug_top(
 ) -> String {
     let read_w = map.watch.iter().map(|i| i.width).sum::<usize>();
     let write_w = map.drive.iter().map(|o| o.width).sum::<usize>();
-    let enables = map.drive.iter().filter(|o| o.enable_bit.is_some()).count();
+    let enables = map.drive.len();
     let own = |n: &str| design.ports.iter().any(|p| p.name == n);
 
     // One wire per exposed design net, named by its order.
@@ -1077,10 +1064,11 @@ fn debug_top(
             let w = design.widths[p];
             let value = format!("logix_dbg_wr[{}:{}]", top_bit - 1, top_bit - w);
             top_bit -= w;
-            let driven = match o.enable_bit {
-                Some(b) => format!("logix_dbg_en[{b}] ? {value} : {}", signal(p)),
-                None => value,
-            };
+            let driven = format!(
+                "logix_dbg_en[{}] ? {value} : {}",
+                o.enable_bit,
+                signal(p)
+            );
             conns.push(format!(".{}({driven})", vid(&format!("{p}.i"))));
         }
     }
@@ -1124,12 +1112,7 @@ async fn debugger_use(
 ) -> DebuggerUse {
     let read_w = map.watch.iter().map(|i| i.width).sum::<usize>().max(1);
     let write_w = map.drive.iter().map(|o| o.width).sum::<usize>().max(1);
-    let enables = map
-        .drive
-        .iter()
-        .filter(|o| o.enable_bit.is_some())
-        .count()
-        .max(1);
+    let enables = map.drive.len().max(1);
     let script = format!(
         "read_verilog logix_debugger.v; chparam -set CLKS_PER_BIT {} -set READ_W {read_w} \
          -set WRITE_W {write_w} -set OVR_W {enables} logix_debugger; \

@@ -118,11 +118,6 @@
               "type": "null"
             }
           ]
-        },
-        "mode": {
-          "description": "How the debugger drives the net. override, the only mode and the\ndefault: the debugger can take over the net from the design, and\nrelease it back. Give a spare control input a default, such as\n`wire en = 1'b0;`, and override it.",
-          "$ref": "#/$defs/DriveMode",
-          "default": "override"
         }
       },
       "additionalProperties": false,
@@ -151,12 +146,6 @@
         "hex",
         "dec",
         "bin"
-      ]
-    },
-    "DriveMode": {
-      "type": "string",
-      "enum": [
-        "override"
       ]
     },
     "WatchNet": {

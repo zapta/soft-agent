@@ -20,7 +20,6 @@ uplink = { kind = "uart", resource = "uart", baud = 1000000 }
 [[drive]]
 name = "leds"
 net = "main.pattern"
-mode = "override"
 format = "bin"
 
 # Stop the light: 1 freezes it, 0 lets it run. The design holds it at 0
@@ -28,7 +27,6 @@ format = "bin"
 [[drive]]
 name = "freeze"
 net = "main.freeze"
-mode = "override"
 
 # watch: nets you read, live, in the panel.
 

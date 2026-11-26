@@ -148,7 +148,7 @@
     <summary>Drive</summary>
     <div class="card">
       <div class="scroll"><table id="drive">
-        <thead><tr><th>Name</th><th class="num">Bits</th><th>Mode</th><th class="center">Format</th><th>State</th><th>Value</th></tr></thead>
+        <thead><tr><th>Name</th><th class="num">Bits</th><th class="center">Format</th><th>State</th><th>Value</th></tr></thead>
         <tbody></tbody>
       </table></div>
       <div class="empty" id="no-drive" hidden>This build drives no nets.</div>
@@ -248,16 +248,6 @@
   function nameCell(name, net) {
     const td = cell(name, "name");
     td.dataset.tip = net;
-    return td;
-  }
-
-  // A drive row's mode, with what it means as its tooltip.
-  const MODE_TIPS = {
-    override: "The design drives this net. Drive takes it over with your value; Release gives it back to the design.",
-  };
-  function modeCell(mode) {
-    const td = cell(mode);
-    if (MODE_TIPS[mode]) td.dataset.tip = MODE_TIPS[mode];
     return td;
   }
 
@@ -432,17 +422,15 @@
         inp.onkeydown = (e) => { if (e.key === "Enter") go(); };
         box.append(inp, b);
       }
-      if (o.mode === "override") {
-        const r = document.createElement("button");
-        r.textContent = "Release";
-        r.className = "release";
-        r.title = `Give ${o.name} back to the design`;
-        r.onclick = () => write({ name: o.name, release: true });
-        box.append(r);
-      }
+      const r = document.createElement("button");
+      r.textContent = "Release";
+      r.className = "release";
+      r.title = `Give ${o.name} back to the design`;
+      r.onclick = () => write({ name: o.name, release: true });
+      box.append(r);
       ctl.append(box);
       tr.append(nameCell(o.name, o.net), cell(String(o.width), "num"),
-        modeCell(o.mode), fmtCell, state, ctl);
+        fmtCell, state, ctl);
       ob.append(tr);
     }
     $("no-watch").hidden = info.watch.length > 0;

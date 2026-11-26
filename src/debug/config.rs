@@ -162,27 +162,6 @@ pub struct DriveNet {
     #[serde(skip)]
     #[schemars(skip)]
     pub parts: Vec<String>,
-    /// How the debugger drives the net. override, the only mode and the
-    /// default: the debugger can take over the net from the design, and
-    /// release it back. Give a spare control input a default, such as
-    /// `wire en = 1'b0;`, and override it.
-    #[serde(default)]
-    pub mode: DriveMode,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum DriveMode {
-    #[default]
-    Override,
-}
-
-impl DriveMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            DriveMode::Override => "override",
-        }
-    }
 }
 
 /// Parses a debug file's text, and checks what its types can't.
@@ -360,7 +339,6 @@ uplink = { kind = "uart", resource = "uart", baud = 115200 }  # a comment
 [[drive]]
 net = "main.blink"
 name = "blink_force"
-mode = "override"
 
 [[watch]]
 net = "main.count"
@@ -378,7 +356,6 @@ name = "two_pins"
         .unwrap();
         assert_eq!(c.watch.len(), 3);
         assert_eq!(c.watch[2].parts, vec!["pin.21", "pin.20"]);
-        assert_eq!(c.drive[0].mode, DriveMode::Override);
         assert_eq!(c.watch[0].format, Some(ValueFormat::Dec));
         assert_eq!(c.watch[1].format, None);
         assert!(parse_json(r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"main.a","format":"octal"}]}"#).is_err());

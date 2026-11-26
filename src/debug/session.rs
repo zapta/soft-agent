@@ -348,7 +348,7 @@ pub struct DebugOpenOutput {
     pub port: String,
     /// The build ID the board's debugger reported, which matches the map.
     pub build_id: String,
-    /// What can be driven: each driven net's name, width and mode.
+    /// What can be driven: each driven net's name and width.
     pub drive: Vec<NetInfo>,
     /// What can be watched: each watched net's name and width.
     pub watch: Vec<NetInfo>,
@@ -359,8 +359,6 @@ pub struct NetInfo {
     pub name: String,
     pub net: String,
     pub width: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
     /// For watched nets: the debug file's format for showing it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
@@ -444,7 +442,6 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
                 name: i.name.clone(),
                 net: i.net.clone(),
                 width: i.width,
-                mode: None,
                 format: i.format.clone(),
             })
             .collect(),
@@ -456,7 +453,6 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
                 name: o.name.clone(),
                 net: o.net.clone(),
                 width: o.width,
-                mode: Some(o.mode.clone()),
                 format: None,
             })
             .collect(),
@@ -646,17 +642,11 @@ pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
                     }
                 ))
             })?;
-        let enable_byte = o.enable_bit.map(|b| b / 8);
+        let bit = o.enable_bit;
         if input.release {
             if input.value.is_some() {
                 return Err(ToolError::request("Give value or release, not both."));
             }
-            let Some(bit) = o.enable_bit else {
-                return Err(ToolError::request(format!(
-                    "{} is in {} mode, which has no release.",
-                    o.name, o.mode
-                )));
-            };
             protocol::set_bits(&mut s.en, bit, &[false]);
             // The release and the read-back, in one batch.
             let mut frames = write_frames(s, protocol::OVERRIDE, bit / 8, 1);
@@ -682,19 +672,15 @@ pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
         let last = (o.offset + o.width - 1) / 8;
         // The value, the take-over and the read-back, in one batch.
         let mut frames = write_frames(s, protocol::WRITE, first, last - first + 1);
-        if let (Some(bit), Some(byte)) = (o.enable_bit, enable_byte) {
-            protocol::set_bits(&mut s.en, bit, &[true]);
-            frames.extend(write_frames(s, protocol::OVERRIDE, byte, 1));
-        }
+        protocol::set_bits(&mut s.en, bit, &[true]);
+        frames.extend(write_frames(s, protocol::OVERRIDE, bit / 8, 1));
         let n = frames.len();
         frames.extend(read_back_frames(s));
         let replies = transact_many(s, &frames)?;
         // What the debugger now holds.
         take_read_back(s, &replies[n..])?;
         let held = protocol::get_bits(&s.wr, o.offset, o.width);
-        let driven = o
-            .enable_bit
-            .is_none_or(|b| protocol::get_bits(&s.en, b, 1)[0]);
+        let driven = protocol::get_bits(&s.en, bit, 1)[0];
         Ok(DebugWriteOutput {
             name: o.name.clone(),
             driven,
@@ -856,7 +842,6 @@ pub struct OutputState {
     pub name: String,
     pub net: String,
     pub width: usize,
-    pub mode: String,
     /// True while the debugger drives it.
     pub driven: bool,
     /// The value the debugger holds for it, in hex and as bits (most
@@ -895,7 +880,6 @@ pub fn info(id: &str) -> Result<SessionInfo, ToolError> {
                     name: i.name.clone(),
                     net: i.net.clone(),
                     width: i.width,
-                    mode: None,
                     format: i.format.clone(),
                 })
                 .collect(),
@@ -909,10 +893,7 @@ pub fn info(id: &str) -> Result<SessionInfo, ToolError> {
                         name: o.name.clone(),
                         net: o.net.clone(),
                         width: o.width,
-                        mode: o.mode.clone(),
-                        driven: o
-                            .enable_bit
-                            .is_none_or(|b| protocol::get_bits(&s.en, b, 1)[0]),
+                        driven: protocol::get_bits(&s.en, o.enable_bit, 1)[0],
                         hex: net_value(&o.name, &o.net, &bits).hex,
                         bits: bits
                             .iter()
