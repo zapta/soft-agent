@@ -13,15 +13,29 @@ of the one connected board that fits the build.
 import argparse
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from softagent import SoftAgent, ToolFailed, board_port  # noqa: E402
 
 
-def open_panel(sa, build_folder, port, open_browser=True):
+def open_session(sa, build_folder, port, wait=0):
+    """debug_open, trying again for up to `wait` seconds while the debugger
+    doesn't answer, as while an FPGA loads its design from flash."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            return sa.tool("debug_open", {"build_folder": build_folder, "port": port})
+        except ToolFailed as e:
+            if "didn't answer" not in e.error.get("message", "") or time.monotonic() > deadline:
+                raise
+            time.sleep(1)
+
+
+def open_panel(sa, build_folder, port, open_browser=True, wait=0):
     """Opens a session and the panel, waits for Enter or Ctrl-C, then
-    closes the session."""
-    s = sa.tool("debug_open", {"build_folder": build_folder, "port": port})
+    closes the session. `wait` is as for open_session."""
+    s = open_session(sa, build_folder, port, wait)
     print(f"Session {s['session']} on {port}, build {s['build_id']}")
     panel = sa.tool("debug_panel", {"session": s["session"], "open": open_browser})
     print(f"Panel: {panel['url']}")

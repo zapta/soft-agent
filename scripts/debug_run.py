@@ -19,7 +19,6 @@ import argparse
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from softagent import SoftAgent, ToolFailed, board_port  # noqa: E402
@@ -110,10 +109,10 @@ def main():
             port = args.port or port
             sa.tool("program_board", {"build_folder": build_folder, "device": device})
             print("Done.")
-            time.sleep(2)  # the FPGA starts the design
 
+            # The FPGA starts the design; from flash that can take seconds.
             step("Opening the debug panel")
-            open_panel(sa, build_folder, port, not args.no_open)
+            open_panel(sa, build_folder, port, not args.no_open, wait=15)
         except ToolFailed as e:
             err = e.error
             print(f"\n{e.tool} failed: {err.get('message', err)}", file=sys.stderr)
