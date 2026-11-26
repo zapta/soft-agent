@@ -53,7 +53,7 @@ impl EngineTool for DebugBuild {
         talks over the board's UART, so the design must not use the UART pins. The design's \
         own sources are unchanged; a normal build of them has no debugger. Writes \
         debug_map.json into the build folder, which the debug tools read. Supports iCE40, ECP5 \
-        and Gowin boards so far. After it, program_board programs the bitstream as for any build.";
+        Gowin and Xilinx 7-series boards. After it, program_board programs the bitstream as for any build.";
     const READ_ONLY: bool = false;
     const OPEN_WORLD: bool = true;
     type Input = DebugBuildInput;
@@ -80,7 +80,7 @@ pub struct DebugBuildInput {
     #[schemars(length(min = 1))]
     pub source_files: Vec<String>,
     /// The constraint file, relative to the source folder: .pcf for iCE40,
-    /// .lpf for ECP5, .cst for Gowin.
+    /// .lpf for ECP5, .cst for Gowin, .xdc for Xilinx.
     pub constraint_file: String,
     /// The debug configuration file, relative to the source folder, such as
     /// debug.toml.
@@ -164,27 +164,38 @@ fn capacity(toolchain: Toolchain, build: &Value) -> Option<Capacity> {
             luts: available("LUT4")?,
             flip_flops: available("DFF")?,
         }),
-        _ => None,
+        Toolchain::Openxc7 => Some(Capacity {
+            luts: available("SLICE_LUTX")?,
+            flip_flops: available("SLICE_FFX")?,
+        }),
     }
 }
 
-/// The toolchains debug_build supports, and what it does differently for
-/// each: the cell library the pre-pass reads, and the synth command and
-/// cells of the debugger's estimate.
-fn supported(board: &logix_engine::board::ResolvedBoard) -> Result<Toolchain, ToolError> {
-    let toolchain = board.fpga.family.toolchain();
+/// The toolchain's folder in yosys's share, such as ice40.
+fn yosys_arch(toolchain: Toolchain) -> &'static str {
     match toolchain {
-        Toolchain::Ice40 | Toolchain::Ecp5 | Toolchain::Gowin => Ok(toolchain),
-        _ => Err(ToolError::request(format!(
-            "debug_build supports iCE40, ECP5 and Gowin boards so far, and {} is another family.",
-            board.name
-        ))),
+        Toolchain::Ice40 => "ice40",
+        Toolchain::Ecp5 => "ecp5",
+        Toolchain::Gowin => "gowin",
+        Toolchain::Openxc7 => "xilinx",
     }
 }
 
 /// The toolchain's yosys cell library, such as +/ice40/cells_sim.v.
 fn cells_sim(toolchain: Toolchain) -> String {
-    format!("+/{}/cells_sim.v", toolchain.id())
+    format!("+/{}/cells_sim.v", yosys_arch(toolchain))
+}
+
+/// The family's yosys synth command, without -top, as the engine runs it.
+fn synth_command(family: logix_engine::catalog::Family) -> String {
+    let toolchain = family.toolchain();
+    let mut cmd = format!("synth_{}", yosys_arch(toolchain));
+    if toolchain == Toolchain::Openxc7 {
+        cmd.push_str(" -arch xc7");
+    } else if let Some(f) = family.yosys_family() {
+        cmd.push_str(&format!(" -family {f}"));
+    }
+    cmd
 }
 
 /// A share, rounded up as the engine's reports do: "0%" only for none.
@@ -219,7 +230,7 @@ pub async fn run(
     state.ensure_catalog(call).await?;
     let custom = logix_engine::custom_boards::load(input.custom_boards_folder.as_deref())?;
     let board = logix_engine::board::resolve(&input.board, &input.board_variant, &custom)?;
-    let toolchain = supported(&board)?;
+    let toolchain = board.fpga.family.toolchain();
     engine_build::check_constraint_extension(&board, &input.constraint_file)?;
     let pcf_text = read(&src.join(&input.constraint_file), "the constraint file")?;
     let pins = constraint_pins(toolchain, &pcf_text);
@@ -604,7 +615,8 @@ fn constraint_pins(toolchain: Toolchain, text: &str) -> BTreeMap<String, String>
     match toolchain {
         Toolchain::Ecp5 => lpf_pins(text),
         Toolchain::Gowin => cst_pins(text),
-        _ => pcf_pins(text),
+        Toolchain::Openxc7 => xdc_pins(text),
+        Toolchain::Ice40 => pcf_pins(text),
     }
 }
 
@@ -626,7 +638,13 @@ fn uart_constraints(toolchain: Toolchain, link: &Link) -> String {
                     let _ = writeln!(out, "IO_PORT \"{port}\" IO_TYPE={io};");
                 }
             }
-            _ => {
+            Toolchain::Openxc7 => {
+                let _ = writeln!(out, "set_property PACKAGE_PIN {pin} [get_ports {port}]");
+                if let Some(io) = &link.io_standard {
+                    let _ = writeln!(out, "set_property IOSTANDARD {io} [get_ports {port}]");
+                }
+            }
+            Toolchain::Ice40 => {
                 let _ = writeln!(out, "set_io {port} {pin}");
             }
         }
@@ -681,6 +699,44 @@ pub fn cst_pins(text: &str) -> BTreeMap<String, String> {
         if words.first().is_some_and(|w| w.eq_ignore_ascii_case("IO_LOC"))
             && let [_, port, pin, ..] = words.as_slice()
         {
+            pins.insert(port.clone(), pin.clone());
+        }
+    }
+    pins
+}
+
+/// Port to pin, from a .xdc's PACKAGE_PIN properties, in either form:
+/// set_property PACKAGE_PIN E3 [get_ports sys_clk] or
+/// set_property -dict { PACKAGE_PIN E3 IOSTANDARD LVCMOS33 } [get_ports { sys_clk }]
+/// (comments start with #; braces and quotes around names are dropped).
+pub fn xdc_pins(text: &str) -> BTreeMap<String, String> {
+    // A name without the brackets, braces, quotes and ; around it, keeping
+    // its own index brackets, as in led[0].
+    fn name(word: &str) -> String {
+        let mut w = word.trim_end_matches(';').to_string();
+        while w.ends_with(']') && w.matches(']').count() > w.matches('[').count() {
+            w.pop();
+        }
+        w.trim_matches(|c| c == '{' || c == '}' || c == '"').to_string()
+    }
+    let mut pins = BTreeMap::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("");
+        let words: Vec<String> = line
+            .split_whitespace()
+            .map(name)
+            .filter(|w| !w.is_empty())
+            .collect();
+        if words.first().map(String::as_str) != Some("set_property") {
+            continue;
+        }
+        let after = |key: &str| {
+            let i = words
+                .iter()
+                .position(|w| w.trim_start_matches('[').eq_ignore_ascii_case(key))?;
+            words.get(i + 1)
+        };
+        if let (Some(pin), Some(port)) = (after("PACKAGE_PIN"), after("get_ports")) {
             pins.insert(port.clone(), pin.clone());
         }
     }
@@ -1268,19 +1324,15 @@ async fn debugger_use(
     cap: Option<Capacity>,
 ) -> DebuggerUse {
     let toolchain = family.toolchain();
+    let synth = synth_command(family);
     let read_w = map.watch.iter().map(|i| i.width).sum::<usize>().max(1);
     let write_w = map.drive.iter().map(|o| o.width).sum::<usize>().max(1);
     let enables = map.drive.len().max(1);
     let script = format!(
         "read_verilog logix_debugger.v; chparam -set CLKS_PER_BIT {} -set READ_W {read_w} \
          -set WRITE_W {write_w} -set OVR_W {enables} logix_debugger; \
-         synth_{}{} -top logix_debugger; tee -o debugger_stat.txt stat",
+         {synth} -top logix_debugger; flatten; tee -o debugger_stat.txt stat",
         link.clks_per_bit,
-        toolchain.id(),
-        family
-            .yosys_family()
-            .map(|f| format!(" -family {f}"))
-            .unwrap_or_default()
     );
     let args: Vec<OsString> = vec!["-q".into(), "-p".into(), script.into()];
     let program = logix_engine::commands::program_in(bin, "yosys");
@@ -1343,6 +1395,16 @@ fn cell_use(toolchain: Toolchain, cell: &str) -> (u32, u32) {
         // LUT1 to LUT4 each take a LUT4; an ALU (adder bit) takes one too.
         Toolchain::Gowin if cell.starts_with("LUT") || cell == "ALU" => (1, 0),
         Toolchain::Gowin if cell.starts_with("DFF") => (0, 1),
+        // LUT1 to LUT6, inverters and shift registers each take a slice
+        // LUT, and a RAM64M or RAM32M (LUT RAM) four; FDRE, FDSE, FDCE and
+        // FDPE a slice flip-flop. CARRY4 has its own logic.
+        Toolchain::Openxc7 if cell == "RAM64M" || cell == "RAM32M" => (4, 0),
+        Toolchain::Openxc7
+            if cell.starts_with("LUT") || cell.starts_with("SRL") || cell == "INV" =>
+        {
+            (1, 0)
+        }
+        Toolchain::Openxc7 if cell.starts_with("FD") => (0, 1),
         _ => (0, 0),
     }
 }
@@ -1426,6 +1488,20 @@ mod tests {
         assert_eq!(p["x"], "17");
         assert_eq!(p["y"], "18");
         assert_eq!(p.len(), 4);
+    }
+
+    #[test]
+    fn xdc_pins_read_package_pin() {
+        let p = xdc_pins(
+            "# x\nset_property PACKAGE_PIN E3 [get_ports sys_clk]\n\
+             set_property IOSTANDARD LVCMOS33 [get_ports sys_clk]\n\
+             set_property -dict { PACKAGE_PIN H5 IOSTANDARD LVCMOS33 } [get_ports { led[0] }]; # c\n\
+             set_property -dict {PACKAGE_PIN J5} [get_ports {led[1]}]\n",
+        );
+        assert_eq!(p["sys_clk"], "E3");
+        assert_eq!(p["led[0]"], "H5");
+        assert_eq!(p["led[1]"], "J5");
+        assert_eq!(p.len(), 3);
     }
 
     #[test]

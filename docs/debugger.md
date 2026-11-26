@@ -380,7 +380,8 @@ change, and keeps the normal build untouched (R3).
  2. generate:         _build/debug/debug_top.v  (user top + debugger + muxes)
                       _build/debug/debug.pcf    (user constraints + UART pins;
                                                   debug.lpf on ECP5,
-                                                  debug.cst on Gowin)
+                                                  debug.cst on Gowin,
+                                                  debug.xdc on Xilinx)
                       _build/debug_map.json     (names, offsets, build ID)
  3. add:              the debugger's own Verilog, embedded in soft-agent
  4. engine build:     the engine's build tool on the files above
@@ -482,13 +483,13 @@ move unchanged; only where the code lives changes. To keep that easy:
 
 Open as of 2026-11-25, to be gone over one at a time:
 
-- [ ] **Every family the engine supports.** `debug_build` refuses
-  families other than iCE40 (`build.rs`). Its iCE40-only parts are the
-  pre-pass, which reads `+/ice40/cells_sim.v`, and the size estimate, which
-  runs `synth_ice40`; both need the family's own cells and synth command. The
-  debugger's Verilog is meant to be generic. A board needs no catalog UART:
-  the uplink's `tx` and `rx` can be any pins, wired to a USB serial adapter.
-  Test each toolchain on one board:
+- [x] **Every family the engine supports** (done 2026-11-26). `debug_build`
+  refused families other than iCE40; the pre-pass and the size estimate
+  now use each family's own cells and synth command, and the UART pins
+  each constraint format (see the build section). The debugger's Verilog
+  is unchanged, generic. A board needs no catalog UART: the uplink's `tx`
+  and `rx` can be any pins, wired to a USB serial adapter. Tested on one
+  board of each toolchain:
   - [x] **IceStorm (iCE40).** Tested on the Alhambra II and the iCESugar
     v1.5.
   - [x] **Trellis (ECP5).** Tested on the iCESugar Pro
@@ -499,8 +500,12 @@ Open as of 2026-11-25, to be gone over one at a time:
     pulses, drives and releases as on iCE40, at 1,000,000 baud. The Tang
     Nano 9K builds too, but its BL702's serial port worked only at 9600
     baud, so it wasn't tested.
-  - [ ] **openXC7 (Artix-7, Spartan-7, Zynq-7000).** Make it build, then
-    test on one 7-series board.
+  - [x] **openXC7 (Artix-7, Spartan-7, Zynq-7000).** Tested on the Arty
+    A7-35T (`examples/arty-a7-35t`, 2026-11-26): reads, holds, pulses,
+    drives and releases as on iCE40, at 1,000,000 baud, programmed to
+    flash. Right after programming, the first `debug_open` got no reply
+    while the FPGA loaded from flash; a second one a little later
+    worked.
 - [ ] **Board data in the catalog.** The UART and the clock already come
   from the board's catalog resources (`uart`, `clock`). Check which Logix
   Catalog boards have a `uart` resource the debugger can use, and say in the
@@ -530,7 +535,7 @@ Open as of 2026-11-25, to be gone over one at a time:
 | Q4 | Writes: `source` only first, or `override` of driven nets too? | Both, if yosys `expose -cut` works as expected; else `source` first (`source`, as Intel's In-System Sources, was called `register` until 2026-11-25). `source` was removed on 2026-11-25, and `mode` with it: overriding a net with a default does the same, safely |
 | Q5 | Debugger clock: always the board clock, or any net? | One clock for the UART and the debugger, the board's clock resource by default; every watched and driven net must be on it |
 | Q6 | The UART when the design uses it too? | Refuse in version 1; console channel later |
-| Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later. Measured 2026-11-25: the Alhambra II, the iCESugar v1.5 and the iCESugar Pro reliable at 1,000,000 (see Batches); the Tang Nano 20K too, 2026-11-26 |
+| Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later. Measured 2026-11-25: the Alhambra II, the iCESugar v1.5 and the iCESugar Pro reliable at 1,000,000 (see Batches); the Tang Nano 20K and the Arty A7-35T too, 2026-11-26 |
 | Q8 | Several debug files per project, merged? | One file per build request |
 | Q9 | Where the schema lives? | In this repo, under `schemas/` |
 | Q10 | Naming rules? | Full instance paths starting with the top module (`main.u_ctrl.state`), or `pin.<pin>` for package pins, whole nets, generate names as yosys prints them, no wildcards (see Naming rules) |
@@ -592,25 +597,31 @@ of a variable shift, and register the reply byte.
   (`wire red_on = ~sw_n[0];`) to its own cut side, a combinational loop.
   The build also refuses any cut net whose driver and loads still share
   bits.
-- **Families:** iCE40 and ECP5 (2026-11-25), Gowin (2026-11-26); Xilinx is
-  refused for now. The pre-pass loads the family's cell library
-  (`+/ice40/cells_sim.v`, `+/ecp5/cells_sim.v`, `+/gowin/cells_sim.v`) as
+- **Families:** iCE40 and ECP5 (2026-11-25), Gowin and Xilinx 7-series
+  (2026-11-26): every toolchain the engine has. The pre-pass loads the
+  family's cell library from yosys (`+/ice40/cells_sim.v`,
+  `+/ecp5/cells_sim.v`, `+/gowin/cells_sim.v`, `+/xilinx/cells_sim.v`) as
   black boxes, so
   `expose -cut` knows which ports of primitives such as `SB_RGBA_DRV` are
   inputs. Without it, a cut net kept feeding primitives from the design's
   side. The UART pins go into the family's constraint format (`set_io` in
-  `.pcf`; `LOCATE COMP` in `.lpf` and `IO_LOC` in `.cst`, with the catalog
-  UART's `IO_TYPE`), and the size estimate runs the family's `synth_ice40`,
-  `synth_ecp5` or `synth_gowin -family <yosys family>`. On
+  `.pcf`; `LOCATE COMP` in `.lpf`, `IO_LOC` in `.cst` and
+  `set_property PACKAGE_PIN` in `.xdc`, with the catalog UART's I/O
+  standard), and the size estimate runs the family's synth command, as the
+  engine does (`synth_ice40`, `synth_ecp5`,
+  `synth_gowin -family <yosys family>`, `synth_xilinx -arch xc7`), then
+  `flatten`, since `synth_xilinx` keeps the hierarchy. On
   ECP5 it is reported against the FPGA's LUTs and flip-flops, which nextpnr
   counts apart (`TRELLIS_COMB`, `TRELLIS_FF`), and a carry cell (`CCU2C`)
   counts as two LUTs. On Gowin it is reported against `LUT4` and `DFF`,
   with each `LUT1`-`LUT4` and `ALU` cell one LUT and each `DFF*` cell one
-  flip-flop.
+  flip-flop. On Xilinx it is reported against `SLICE_LUTX` and
+  `SLICE_FFX`, with each `LUT1`-`LUT6`, `INV` and `SRL*` cell one LUT, a
+  `RAM64M` or `RAM32M` four, and each `FD*` cell one flip-flop.
 - **Generated files:** `<build folder>/debug_src/` holds `design_debug.v`,
   `debug_top.v` (top module `logix_debug_top`, UART ports
   `logix_debug_tx`/`logix_debug_rx`), `debug.pcf` (`debug.lpf` on ECP5,
-  `debug.cst` on Gowin)
+  `debug.cst` on Gowin, `debug.xdc` on Xilinx)
   and `logix_debugger.v`.
   The engine's `build` builds them into the build folder, next to
   `debug_map.json`.
@@ -656,6 +667,7 @@ of a variable shift, and register the reply byte.
   | iCESugar v1.5 at 1,000,000 baud | 1.0 ms, about 1,000/s | 2 ms | 4 ms |
   | iCESugar Pro (ECP5, its iCELink) at 1,000,000 baud | 1.0 ms, about 1,000/s | | |
   | Tang Nano 20K (Gowin, its BL616) at 1,000,000 baud | 6 ms, 167/s | | |
+  | Arty A7-35T (Xilinx, FTDI) at 1,000,000 baud | 16 ms, 63/s | | |
 
   At 115200 baud a read's bytes take about 4 ms on the wire. That is
   nearly all of the iCESugar's time, so 1 Mbaud makes it four times
@@ -665,7 +677,9 @@ of a variable shift, and register the reply byte.
   iCESugar Pro too, with 500 reads and no errors (25 clocks a bit from its
   25 MHz clock), and the Tang Nano 20K (2026-11-26), with 500 reads and no
   errors (27 clocks a bit from its 27 MHz clock); its BL616's USB serial
-  port, not the wire, sets its pace. With a
+  port, not the wire, sets its pace. The Arty A7-35T too (2026-11-26),
+  with 500 reads and no errors (100 clocks a bit from its 100 MHz clock);
+  its FTDI chip's latency timer sets its pace, as on the Alhambra. With a
   12 MHz clock the usable fast rates are 1,000,000 (12 clocks a bit,
   exact), 921,600 and 1,500,000 (8 clocks a bit, the fastest the build
   accepts).
