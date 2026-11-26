@@ -261,6 +261,10 @@ Writes:
   that register's next value, as an override does, so pulses suit control
   inputs best (start, step, clear). In the Alhambra II example, a pulse on
   `step_now` steps the frozen light once.
+  Tested on the Alhambra II on 2026-11-25: with the light frozen, each
+  pulse on `step_now` moved it exactly one place, released or driven to 0;
+  a pulse on `freeze` held at 1 left it frozen and still driven at 1; and
+  pulsing the 8-bit `leds` was refused.
 
 ### Naming rules (version 1)
 
