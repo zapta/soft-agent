@@ -379,7 +379,8 @@ change, and keeps the normal build untouched (R3).
                       -> write_verilog  _build/debug/design_debug.v
  2. generate:         _build/debug/debug_top.v  (user top + debugger + muxes)
                       _build/debug/debug.pcf    (user constraints + UART pins;
-                                                  debug.lpf on ECP5)
+                                                  debug.lpf on ECP5,
+                                                  debug.cst on Gowin)
                       _build/debug_map.json     (names, offsets, build ID)
  3. add:              the debugger's own Verilog, embedded in soft-agent
  4. engine build:     the engine's build tool on the files above
@@ -493,8 +494,11 @@ Open as of 2026-11-25, to be gone over one at a time:
   - [x] **Trellis (ECP5).** Tested on the iCESugar Pro
     (`examples/icesugar-pro`, 2026-11-25): reads, holds, pulses, drives
     and releases as on iCE40, at 115200 and 1,000,000 baud.
-  - [ ] **Apicula (Gowin GW1N, GW2A, GW5A).** Make it build, then test on
-    one Gowin board.
+  - [x] **Apicula (Gowin GW1N, GW2A, GW5A).** Tested on the Tang Nano 20K
+    (`examples/tang-nano-20k`, GW2AR-18, 2026-11-26): reads, holds,
+    pulses, drives and releases as on iCE40, at 1,000,000 baud. The Tang
+    Nano 9K builds too, but its BL702's serial port worked only at 9600
+    baud, so it wasn't tested.
   - [ ] **openXC7 (Artix-7, Spartan-7, Zynq-7000).** Make it build, then
     test on one 7-series board.
 - [ ] **Board data in the catalog.** The UART and the clock already come
@@ -526,7 +530,7 @@ Open as of 2026-11-25, to be gone over one at a time:
 | Q4 | Writes: `source` only first, or `override` of driven nets too? | Both, if yosys `expose -cut` works as expected; else `source` first (`source`, as Intel's In-System Sources, was called `register` until 2026-11-25). `source` was removed on 2026-11-25, and `mode` with it: overriding a net with a default does the same, safely |
 | Q5 | Debugger clock: always the board clock, or any net? | One clock for the UART and the debugger, the board's clock resource by default; every watched and driven net must be on it |
 | Q6 | The UART when the design uses it too? | Refuse in version 1; console channel later |
-| Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later. Measured 2026-11-25: the Alhambra II, the iCESugar v1.5 and the iCESugar Pro reliable at 1,000,000 (see Batches) |
+| Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later. Measured 2026-11-25: the Alhambra II, the iCESugar v1.5 and the iCESugar Pro reliable at 1,000,000 (see Batches); the Tang Nano 20K too, 2026-11-26 |
 | Q8 | Several debug files per project, merged? | One file per build request |
 | Q9 | Where the schema lives? | In this repo, under `schemas/` |
 | Q10 | Naming rules? | Full instance paths starting with the top module (`main.u_ctrl.state`), or `pin.<pin>` for package pins, whole nets, generate names as yosys prints them, no wildcards (see Naming rules) |
@@ -588,20 +592,25 @@ of a variable shift, and register the reply byte.
   (`wire red_on = ~sw_n[0];`) to its own cut side, a combinational loop.
   The build also refuses any cut net whose driver and loads still share
   bits.
-- **Families:** iCE40 and ECP5 (2026-11-25); Gowin and Xilinx are refused
-  for now. The pre-pass loads the family's cell library
-  (`+/ice40/cells_sim.v`, `+/ecp5/cells_sim.v`) as black boxes, so
+- **Families:** iCE40 and ECP5 (2026-11-25), Gowin (2026-11-26); Xilinx is
+  refused for now. The pre-pass loads the family's cell library
+  (`+/ice40/cells_sim.v`, `+/ecp5/cells_sim.v`, `+/gowin/cells_sim.v`) as
+  black boxes, so
   `expose -cut` knows which ports of primitives such as `SB_RGBA_DRV` are
   inputs. Without it, a cut net kept feeding primitives from the design's
   side. The UART pins go into the family's constraint format (`set_io` in
-  `.pcf`; `LOCATE COMP` in `.lpf`, with the catalog UART's `IO_TYPE`), and
-  the size estimate runs the family's `synth_ice40` or `synth_ecp5`. On
+  `.pcf`; `LOCATE COMP` in `.lpf` and `IO_LOC` in `.cst`, with the catalog
+  UART's `IO_TYPE`), and the size estimate runs the family's `synth_ice40`,
+  `synth_ecp5` or `synth_gowin -family <yosys family>`. On
   ECP5 it is reported against the FPGA's LUTs and flip-flops, which nextpnr
   counts apart (`TRELLIS_COMB`, `TRELLIS_FF`), and a carry cell (`CCU2C`)
-  counts as two LUTs.
+  counts as two LUTs. On Gowin it is reported against `LUT4` and `DFF`,
+  with each `LUT1`-`LUT4` and `ALU` cell one LUT and each `DFF*` cell one
+  flip-flop.
 - **Generated files:** `<build folder>/debug_src/` holds `design_debug.v`,
   `debug_top.v` (top module `logix_debug_top`, UART ports
-  `logix_debug_tx`/`logix_debug_rx`), `debug.pcf` (`debug.lpf` on ECP5)
+  `logix_debug_tx`/`logix_debug_rx`), `debug.pcf` (`debug.lpf` on ECP5,
+  `debug.cst` on Gowin)
   and `logix_debugger.v`.
   The engine's `build` builds them into the build folder, next to
   `debug_map.json`.
@@ -646,6 +655,7 @@ of a variable shift, and register the reply byte.
   | Alhambra II at 1,000,000 baud | 16 ms, 63/s | 32 ms | 34 ms |
   | iCESugar v1.5 at 1,000,000 baud | 1.0 ms, about 1,000/s | 2 ms | 4 ms |
   | iCESugar Pro (ECP5, its iCELink) at 1,000,000 baud | 1.0 ms, about 1,000/s | | |
+  | Tang Nano 20K (Gowin, its BL616) at 1,000,000 baud | 6 ms, 167/s | | |
 
   At 115200 baud a read's bytes take about 4 ms on the wire. That is
   nearly all of the iCESugar's time, so 1 Mbaud makes it four times
@@ -653,7 +663,9 @@ of a variable shift, and register the reply byte.
   Both bridges were reliable at 1 Mbaud: 300 reads on the Alhambra and
   3,300 on the iCESugar, with no errors and no implausible values; the
   iCESugar Pro too, with 500 reads and no errors (25 clocks a bit from its
-  25 MHz clock). With a
+  25 MHz clock), and the Tang Nano 20K (2026-11-26), with 500 reads and no
+  errors (27 clocks a bit from its 27 MHz clock); its BL616's USB serial
+  port, not the wire, sets its pace. With a
   12 MHz clock the usable fast rates are 1,000,000 (12 clocks a bit,
   exact), 921,600 and 1,500,000 (8 clocks a bit, the fastest the build
   accepts).

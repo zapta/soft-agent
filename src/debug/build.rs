@@ -52,8 +52,8 @@ impl EngineTool for DebugBuild {
         instance path such as main.u_ctrl.state, and the clock the debugger runs on. The debugger \
         talks over the board's UART, so the design must not use the UART pins. The design's \
         own sources are unchanged; a normal build of them has no debugger. Writes \
-        debug_map.json into the build folder, which the debug tools read. Supports iCE40 and \
-        ECP5 boards so far. After it, program_board programs the bitstream as for any build.";
+        debug_map.json into the build folder, which the debug tools read. Supports iCE40, ECP5 \
+        and Gowin boards so far. After it, program_board programs the bitstream as for any build.";
     const READ_ONLY: bool = false;
     const OPEN_WORLD: bool = true;
     type Input = DebugBuildInput;
@@ -80,7 +80,7 @@ pub struct DebugBuildInput {
     #[schemars(length(min = 1))]
     pub source_files: Vec<String>,
     /// The constraint file, relative to the source folder: .pcf for iCE40,
-    /// .lpf for ECP5.
+    /// .lpf for ECP5, .cst for Gowin.
     pub constraint_file: String,
     /// The debug configuration file, relative to the source folder, such as
     /// debug.toml.
@@ -160,6 +160,10 @@ fn capacity(toolchain: Toolchain, build: &Value) -> Option<Capacity> {
             luts: available("TRELLIS_COMB")?,
             flip_flops: available("TRELLIS_FF")?,
         }),
+        Toolchain::Gowin => Some(Capacity {
+            luts: available("LUT4")?,
+            flip_flops: available("DFF")?,
+        }),
         _ => None,
     }
 }
@@ -170,9 +174,9 @@ fn capacity(toolchain: Toolchain, build: &Value) -> Option<Capacity> {
 fn supported(board: &logix_engine::board::ResolvedBoard) -> Result<Toolchain, ToolError> {
     let toolchain = board.fpga.family.toolchain();
     match toolchain {
-        Toolchain::Ice40 | Toolchain::Ecp5 => Ok(toolchain),
+        Toolchain::Ice40 | Toolchain::Ecp5 | Toolchain::Gowin => Ok(toolchain),
         _ => Err(ToolError::request(format!(
-            "debug_build supports iCE40 and ECP5 boards so far, and {} is another family.",
+            "debug_build supports iCE40, ECP5 and Gowin boards so far, and {} is another family.",
             board.name
         ))),
     }
@@ -338,7 +342,7 @@ pub async fn run(
         &(serde_json::to_string_pretty(&map).unwrap_or_default() + "\n"),
     )?;
     let debugger = debugger_use(
-        toolchain,
+        board.fpga.family,
         &map,
         &link,
         &gen_dir,
@@ -599,6 +603,7 @@ fn uplink(
 fn constraint_pins(toolchain: Toolchain, text: &str) -> BTreeMap<String, String> {
     match toolchain {
         Toolchain::Ecp5 => lpf_pins(text),
+        Toolchain::Gowin => cst_pins(text),
         _ => pcf_pins(text),
     }
 }
@@ -613,6 +618,12 @@ fn uart_constraints(toolchain: Toolchain, link: &Link) -> String {
                 let _ = writeln!(out, "LOCATE COMP \"{port}\" SITE \"{pin}\";");
                 if let Some(io) = &link.io_standard {
                     let _ = writeln!(out, "IOBUF PORT \"{port}\" IO_TYPE={io};");
+                }
+            }
+            Toolchain::Gowin => {
+                let _ = writeln!(out, "IO_LOC \"{port}\" {pin};");
+                if let Some(io) = &link.io_standard {
+                    let _ = writeln!(out, "IO_PORT \"{port}\" IO_TYPE={io};");
                 }
             }
             _ => {
@@ -648,6 +659,29 @@ pub fn lpf_pins(text: &str) -> BTreeMap<String, String> {
             && let Some(pin) = words.get(4)
         {
             pins.insert(words[2].clone(), pin.clone());
+        }
+    }
+    pins
+}
+
+/// Port to pin, from a .cst's IO_LOC statements, such as
+/// IO_LOC "led[0]" 10; (statements end at ;, comments start with //).
+pub fn cst_pins(text: &str) -> BTreeMap<String, String> {
+    let code: String = text
+        .lines()
+        .map(|l| l.split("//").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut pins = BTreeMap::new();
+    for statement in code.split(';') {
+        let words: Vec<String> = statement
+            .split_whitespace()
+            .map(|w| w.trim_matches('"').to_string())
+            .collect();
+        if words.first().is_some_and(|w| w.eq_ignore_ascii_case("IO_LOC"))
+            && let [_, port, pin, ..] = words.as_slice()
+        {
+            pins.insert(port.clone(), pin.clone());
         }
     }
     pins
@@ -1225,7 +1259,7 @@ fn debug_top(
 // --- The debugger's own share ----------------------------------------------
 
 async fn debugger_use(
-    toolchain: Toolchain,
+    family: logix_engine::catalog::Family,
     map: &DebugMap,
     link: &Link,
     gen_dir: &Path,
@@ -1233,15 +1267,20 @@ async fn debugger_use(
     call: &Call,
     cap: Option<Capacity>,
 ) -> DebuggerUse {
+    let toolchain = family.toolchain();
     let read_w = map.watch.iter().map(|i| i.width).sum::<usize>().max(1);
     let write_w = map.drive.iter().map(|o| o.width).sum::<usize>().max(1);
     let enables = map.drive.len().max(1);
     let script = format!(
         "read_verilog logix_debugger.v; chparam -set CLKS_PER_BIT {} -set READ_W {read_w} \
          -set WRITE_W {write_w} -set OVR_W {enables} logix_debugger; \
-         synth_{} -top logix_debugger; tee -o debugger_stat.txt stat",
+         synth_{}{} -top logix_debugger; tee -o debugger_stat.txt stat",
         link.clks_per_bit,
-        toolchain.id()
+        toolchain.id(),
+        family
+            .yosys_family()
+            .map(|f| format!(" -family {f}"))
+            .unwrap_or_default()
     );
     let args: Vec<OsString> = vec!["-q".into(), "-p".into(), script.into()];
     let program = logix_engine::commands::program_in(bin, "yosys");
@@ -1301,6 +1340,9 @@ fn cell_use(toolchain: Toolchain, cell: &str) -> (u32, u32) {
         // A carry cell is two LUTs of a slice.
         Toolchain::Ecp5 if cell == "CCU2C" => (2, 0),
         Toolchain::Ecp5 if cell == "TRELLIS_FF" => (0, 1),
+        // LUT1 to LUT4 each take a LUT4; an ALU (adder bit) takes one too.
+        Toolchain::Gowin if cell.starts_with("LUT") || cell == "ALU" => (1, 0),
+        Toolchain::Gowin if cell.starts_with("DFF") => (0, 1),
         _ => (0, 0),
     }
 }
@@ -1370,6 +1412,19 @@ mod tests {
         assert_eq!(p["led[0]"], "A11");
         assert_eq!(p["x"], "B9");
         assert_eq!(p["y"], "A9");
+        assert_eq!(p.len(), 4);
+    }
+
+    #[test]
+    fn cst_pins_read_io_loc() {
+        let p = cst_pins(
+            "// x\nIO_LOC \"sys_clk\" 52;\nIO_PORT \"sys_clk\" IO_TYPE=LVCMOS33;\n\
+             io_loc \"led[0]\" 10; // c\nIO_LOC x 17; IO_LOC y 18;\n",
+        );
+        assert_eq!(p["sys_clk"], "52");
+        assert_eq!(p["led[0]"], "10");
+        assert_eq!(p["x"], "17");
+        assert_eq!(p["y"], "18");
         assert_eq!(p.len(), 4);
     }
 
