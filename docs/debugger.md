@@ -477,18 +477,11 @@ only saves the user from typing it.
   `clock` of the debug file. The board's catalog clock (`type: "clock"`, with
   `pin` and `mhz`) gives the frequency when the clock port is on its pin;
   any other clock pin works with `clock_mhz` in the file.
-  - **An internal oscillator** can work too, if it is accurate enough: the
-    UART samples each bit in its middle, so the two ends together may be
-    about 5% apart over a byte. The build already allows up to 2% for its
-    own divisor rounding, so the oscillator should be within about 2% at
-    the board's temperature and voltage. Check the family's datasheet. The
-    iCE40 UltraPlus and LM `SB_HFOSC` is the likely one, on boards with no
-    clock pin (the pico-ice, the ODT IcyBlue Feather). This isn't supported
-    yet: `clock` must be a top-level input port in the constraint file
-    (`build.rs`), and an oscillator's output is an internal net. It needs a
-    `clock` that names an internal net (the design already runs on the
-    oscillator) with `clock_mhz` required. See the to-do under To do before
-    porting.
+  - **Not an internal oscillator** (decided 2026-11-26): the UART needs
+    the clock within about 2%, and the iCE40 UltraPlus's 48 MHz `SB_HFOSC`
+    is specified at ±10% (0 to 85 °C) and ±20% (−40 to 100 °C), in its
+    datasheet's Table 4.11. The user dropped it: too inaccurate. `clock`
+    stays a top-level input port on a pin.
 - **A UART link to the host:** a TX and an RX pin, at a 3.3 V (or the
   bank's) I/O standard.
   - The board's own USB serial bridge, as a catalog `uart` resource (`tx`,
@@ -547,8 +540,8 @@ the boards. The catalog has no field for a bridge without a `uart` resource.
 Clocks: 79 of the 81 boards have a catalog clock, from 12 to 125 MHz, and
 every one of them can make 115200 baud within the build's 2%. The two with
 none, the pico-ice and the ODT IcyBlue Feather, have no clock pin in the
-catalog; they need the internal oscillator support above, or a clock on a
-pin with `clock_mhz`.
+catalog; they need a clock on a pin, with `clock_mhz` (not their internal
+oscillator, above).
 
 ## Prior art
 
@@ -619,10 +612,8 @@ Open as of 2026-11-25, to be gone over one at a time:
   only 1,000,000. What a board needs and where the 81 catalog boards stand
   are under Boards: 6 have a `uart`, about 27 more likely have a bridge
   with no `uart` entry yet, and 79 have a clock.
-- [ ] **Internal oscillators.** Let `clock` name an internal net, such as
-  an iCE40 `SB_HFOSC`'s output, with `clock_mhz` required, for boards with
-  no clock pin whose oscillator is accurate enough (Boards). Today it must
-  be a top-level input port.
+- [x] **Internal oscillators** (dropped 2026-11-26). The iCE40
+  UltraPlus's `SB_HFOSC` is ±10% at best, against the UART's 2% (Boards).
 - [x] **Cost** (done 2026-11-26). The debugger was rebuilt for size and
   speed (Debugger hardware), with protocol 1. Measured as the difference
   between a normal build and a debug build of each example (the Alhambra
