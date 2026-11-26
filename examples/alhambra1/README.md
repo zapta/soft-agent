@@ -11,12 +11,19 @@ board and opens the page.
 
 - A Mac with Apple Silicon (the only platform for now).
 - An Alhambra II board and its USB cable.
-- Rust, through rustup: `brew install rustup` (with [Homebrew](https://brew.sh)).
-  The first build installs the Rust version the repo asks for.
-- Python 3, which comes with Apple's command line tools:
-  `xcode-select --install`.
 - About 5 GB of disk: the FPGA toolchain (3 GB, in `~/.logix/soft-agent`)
   and the Rust build (1 GB, in the repo's `target` folder).
+
+Then, once, from the repo's folder:
+
+```sh
+./install-deps.sh
+```
+
+It installs the rest: Apple's command line tools (git, Python 3), Homebrew
+(it asks first), Rust through rustup, and soft-agent with its FPGA
+toolchain. It takes a while the first time, mostly downloading; run it again
+whenever a step stopped, as it skips what's already there.
 
 ## Run it
 
@@ -28,10 +35,10 @@ examples/alhambra1/run.sh
 
 It goes through these steps, saying which one it's on:
 
-1. **Builds soft-agent**, this repo's program. The first time takes a few
-   minutes; later, a few seconds.
-2. **Gets the FPGA toolchain** (yosys, nextpnr and the rest), the first time
-   only. It's large, so this can take several minutes.
+1. **Builds soft-agent**, this repo's program, when it changed: a few
+   seconds.
+2. **Checks the FPGA toolchain** (yosys, nextpnr and the rest), and
+   downloads it if `install-deps.sh` hasn't.
 3. **Builds the design with the debugger**, into `_build_debug` here, and
    prints how much of the FPGA it uses.
 4. **Programs the board.** The LEDs start running.

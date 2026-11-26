@@ -25,6 +25,11 @@ separate process:
 
 ## Requirements
 
+On a Mac with Apple Silicon, `./install-deps.sh` installs all of it: Apple's
+command line tools, Homebrew (after asking), rustup, the repo's Rust version,
+soft-agent itself and its FPGA toolchain (about 3 GB). Each step skips what's
+already there.
+
 - macOS on Apple Silicon (as the engine, for now).
 - Rust via rustup (`brew install rustup`). The first build installs the
   version pinned in `rust-toolchain.toml`.
