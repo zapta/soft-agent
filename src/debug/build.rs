@@ -1058,6 +1058,10 @@ fn debug_top(
     for (net, _) in &wires {
         conns.push(format!(".{}({})", vid(net), wire_of[net]));
     }
+    // What the design sees of each driven net: the debugger's value while
+    // driven, the design's own while released, and flipped during a pulse.
+    // Watching a driven net reads this, not the design's side of the cut.
+    let mut seen: BTreeMap<String, String> = BTreeMap::new();
     for (o, ps) in map.drive.iter().zip(out_parts) {
         // The parts take the entry's bits, the first the most significant.
         let mut top_bit = o.offset + o.width;
@@ -1071,7 +1075,10 @@ fn debug_top(
             if o.width == 1 {
                 driven = format!("logix_dbg_pl[{b}] ^ ({driven})");
             }
-            conns.push(format!(".{}({driven})", vid(&format!("{p}.i"))));
+            let name = format!("{}_seen", signal(p));
+            let _ = writeln!(v, "  wire [{}:0] {name} = {driven};", w - 1);
+            conns.push(format!(".{}({name})", vid(&format!("{p}.i"))));
+            seen.insert(p.clone(), name);
         }
     }
     let _ = writeln!(
@@ -1083,7 +1090,12 @@ fn debug_top(
 
     // The read space, first net in the low bits.
     // Each watched entry's parts are already most significant first.
-    let bits: Vec<String> = parts.iter().rev().flatten().map(|p| signal(p)).collect();
+    let bits: Vec<String> = parts
+        .iter()
+        .rev()
+        .flatten()
+        .map(|p| seen.get(p).cloned().unwrap_or_else(|| signal(p)))
+        .collect();
     let rd = if bits.is_empty() {
         "1'b0".to_string()
     } else {

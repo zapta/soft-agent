@@ -3,8 +3,8 @@
 // 12 MHz clock.
 //
 // It is ready for the debugger: debug.toml names the nets to watch and drive,
-// and `freeze` and `step_now` below are spare control inputs for the
-// debugger to drive.
+// and `enable_step` and `enable_cycle` below are spare control inputs for
+// the debugger to drive.
 
 module main #(
     // Clock cycles per step: 3,000,000 at 12 MHz is a quarter second.
@@ -21,19 +21,24 @@ module main #(
       .tick(step)
   );
 
-  // Stops the light while 1. The design keeps it 0; in a debug build the
-  // debugger can take it over from the panel (debug.toml).
-  wire freeze = 1'b0;
-
-  // Steps the light once in each clock it is 1, frozen or not. The design
-  // keeps it 0; the panel's Pulse makes it 1 for a single clock.
-  wire step_now = 1'b0;
+  // Each step waits for one of these. The design keeps both 1, so the
+  // light runs; in a debug build the debugger can take them over from the
+  // panel (debug.toml).
+  wire enable_step = 1'b1;   // a move to the next LED waits for it
+  wire enable_cycle = 1'b1;  // a new cycle, from LED7 back to LED0, waits for it
 
   // The lit LED, moving one place left at each step and wrapping around.
   reg [7:0] pattern = 8'b0000_0001;
 
-  always @(posedge sys_clk)
-    if ((step && !freeze) || step_now) pattern <= {pattern[6:0], pattern[7]};
+  // A step is due from the timer's tick until it is taken. Ticks that come
+  // while one is due don't add up.
+  reg  due = 1'b0;
+  wire take = due && (pattern[7] ? enable_cycle : enable_step);
+
+  always @(posedge sys_clk) begin
+    if (take) pattern <= {pattern[6:0], pattern[7]};
+    due <= step || (due && !take);
+  end
 
   assign leds = pattern;
 

@@ -22,17 +22,17 @@ name = "leds"
 net = "main.pattern"
 format = "bin"
 
-# Stop the light: 1 freezes it, 0 lets it run. The design holds it at 0
-# (see main.v); Release gives it back.
+# Hold the light: 0 stops each move to the next LED, and Pulse lets one
+# through. The design holds it at 1 (see main.v); Release gives it back.
 [[drive]]
-name = "freeze"
-net = "main.freeze"
+name = "enable_step"
+net = "main.enable_step"
 
-# Step the light once: Pulse makes it 1 for exactly one clock. Freeze the
-# light first to see each step.
+# Hold the light at the end of each cycle: 0 stops it at LED7, and Pulse
+# starts one new cycle. The design holds it at 1; Release gives it back.
 [[drive]]
-name = "step_now"
-net = "main.step_now"
+name = "enable_cycle"
+net = "main.enable_cycle"
 
 # watch: nets you read, live, in the panel.
 
@@ -50,3 +50,13 @@ format = "dec"
 [[watch]]
 name = "step"
 net = "main.step"
+
+# The two enables, as the design sees them: 1 unless driven to 0. Names are
+# unique across drive and watch, so these differ from the drive entries'.
+[[watch]]
+name = "step_enabled"
+net = "main.enable_step"
+
+[[watch]]
+name = "cycle_enabled"
+net = "main.enable_cycle"

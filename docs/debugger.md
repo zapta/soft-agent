@@ -183,7 +183,10 @@ net = "main.u_ctrl.state"
   `watch` the nets it reads (probe\_in, probes). They were `output` and
   `input` in earlier drafts, which read backwards from the design's side.
   `name` is the host's name for each (defaults to the net's path); widths
-  come from the design, not the file.
+  come from the design, not the file. Watching a net that is also driven
+  reads what the design sees of it: the host's value while driven, the
+  design's own while released (since 2026-11-25; it read the design's own
+  value only, so a driven constant never changed in Watch).
 - `format` of a watch or drive entry: how hosts show its value at first,
   `hex`, `dec` or `bin`, and for a drive entry, how a typed value is read
   (a value with its own `0x` or `0b` prefix means what it says). Optional:
@@ -260,8 +263,9 @@ Writes:
   show there; its effects do. A pulse on a register's output also feeds
   that register's next value, as an override does, so pulses suit control
   inputs best (start, step, clear). In the Alhambra II example, a pulse on
-  `step_now` steps the frozen light once.
-  Tested on the Alhambra II on 2026-11-25: with the light frozen, each
+  `enable_step`, held at 0, lets one step through.
+  Tested on the Alhambra II on 2026-11-25, with that example's earlier
+  `freeze` and `step_now` nets: with the light frozen, each
   pulse on `step_now` moved it exactly one place, released or driven to 0;
   a pulse on `freeze` held at 1 left it frozen and still driven at 1; and
   pulsing the 8-bit `leds` was refused.
