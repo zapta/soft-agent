@@ -22,7 +22,10 @@ the overview, how to run it and how to bump the engine.
 - `scripts/run-in-claude.sh`, `scripts/serve.sh`: build and run for Claude Code.
 - `scripts/debug-run.sh` (build with the debugger, program, open the panel)
   and `scripts/debug-panel.sh`: the debugger from the shell, with no AI
-  agent, through `scripts/softagent.py`, a small MCP client.
+  agent, through `scripts/softagent.py`, a small MCP client. The Python
+  scripts also run alone (Windows, no bash), on `cargo build --release`'s
+  binary; `scripts/debug_check.py` checks the debugger on an iCESugar v1.5,
+  `scripts/tool.py` calls one tool.
 - `examples/`: projects friends can run with no AI agent, each with a
   README; `examples/alhambra1` is the Alhambra II one, the one shared with
   friends; `examples/icesugar-1-5` is the iCESugar v1.5 one, the board the

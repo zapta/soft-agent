@@ -5,6 +5,11 @@ Run it through scripts/debug-run.sh, which builds soft-agent first:
 
     scripts/debug-run.sh PROJECT_FOLDER [--port PORT] [--no-open] [--no-upload]
 
+or, where bash isn't at hand (Windows), run it with Python after
+`cargo build --release`, which it then uses:
+
+    python scripts/debug_run.py PROJECT_FOLDER [--port PORT] [--no-open] [--no-upload]
+
 The project folder holds logix.json (board, top_module, and optionally
 source_files, constraint_file and debug_file), its sources and its debug file;
 see examples/alhambra1. The steps, each a soft-agent tool:
@@ -21,7 +26,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from softagent import SoftAgent, ToolFailed, board_port  # noqa: E402
+from softagent import SoftAgent, ToolFailed, board_port, default_engine_folder, default_server  # noqa: E402
 from debug_panel import open_panel  # noqa: E402
 
 
@@ -63,8 +68,8 @@ def main():
     ap.add_argument("--port", help="the board's serial port; found by list_devices when left out")
     ap.add_argument("--no-open", action="store_true", help="print the panel's address without opening it")
     ap.add_argument("--no-upload", action="store_true", help="only build: don't program the board or open the panel")
-    ap.add_argument("--server", required=True, help="the soft-agent binary (debug-run.sh passes it)")
-    ap.add_argument("--engine-folder", required=True, help="the engine folder (debug-run.sh passes it)")
+    ap.add_argument("--server", default=default_server(), help="the soft-agent binary; target/release/soft-agent when left out")
+    ap.add_argument("--engine-folder", default=default_engine_folder(), help="the engine folder; ~/.logix/soft-agent/engine-data when left out")
     ap.add_argument("--cwd", default=os.getcwd(), help="the folder relative paths start from (debug-run.sh passes it)")
     args = ap.parse_args()
 

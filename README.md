@@ -98,6 +98,22 @@ browser, and waits: Enter or Ctrl-C closes the session, releasing every
 override. It finds the connected board's serial port; give `--port` when
 there are several.
 
+## Without bash, and other scripts
+
+The Python scripts run on their own too, such as on Windows, after `cargo
+build --release`, whose binary they use (and the engine folder
+`~/.logix/soft-agent/engine-data`):
+
+```sh
+python scripts/debug_run.py examples/icesugar-1-5
+python scripts/debug_check.py
+python scripts/tool.py list_devices
+```
+
+`debug_check.py` checks the debugger on a connected iCESugar v1.5 and prints
+PASS or FAIL for each step; `tool.py` calls any one tool, with `key=value`
+arguments, such as `python scripts/tool.py install_driver device=...`.
+
 ## Engine version
 
 `Cargo.toml` follows the engine's `main` branch; `Cargo.lock` records the

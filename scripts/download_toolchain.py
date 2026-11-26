@@ -10,13 +10,13 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from softagent import SoftAgent, ToolFailed  # noqa: E402
+from softagent import SoftAgent, ToolFailed, default_engine_folder, default_server  # noqa: E402
 
 
 def main():
     ap = argparse.ArgumentParser(description="Download soft-agent's FPGA toolchain.")
-    ap.add_argument("--server", required=True, help="the soft-agent binary")
-    ap.add_argument("--engine-folder", required=True, help="the engine folder")
+    ap.add_argument("--server", default=default_server(), help="the soft-agent binary; target/release/soft-agent when left out")
+    ap.add_argument("--engine-folder", default=default_engine_folder(), help="the engine folder; ~/.logix/soft-agent/engine-data when left out")
     args = ap.parse_args()
 
     with SoftAgent(args.server, args.engine_folder, "download-toolchain") as sa:

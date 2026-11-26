@@ -4,6 +4,9 @@ Run it through scripts/debug-panel.sh, which builds soft-agent first:
 
     scripts/debug-panel.sh BUILD_FOLDER [--port PORT] [--no-open]
 
+or with Python after `cargo build --release` (`python
+scripts/debug_panel.py BUILD_FOLDER ...`), where bash isn't at hand.
+
 It starts soft-agent, opens a debug session (debug_open) and the panel
 (debug_panel), and waits; Enter or Ctrl-C closes the session, which releases
 every override and frees the port. Without --port it uses the serial port
@@ -16,7 +19,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from softagent import SoftAgent, ToolFailed, board_port  # noqa: E402
+from softagent import SoftAgent, ToolFailed, board_port, default_engine_folder, default_server  # noqa: E402
 
 
 def open_session(sa, build_folder, port, wait=0):
@@ -53,8 +56,8 @@ def main():
     ap.add_argument("build_folder", help="the debug build's folder, such as ~/my-design/_build_debug")
     ap.add_argument("--port", help="the board's serial port; found by list_devices when left out")
     ap.add_argument("--no-open", action="store_true", help="print the panel's address without opening it")
-    ap.add_argument("--server", required=True, help="the soft-agent binary (debug-panel.sh passes it)")
-    ap.add_argument("--engine-folder", required=True, help="the engine folder (debug-panel.sh passes it)")
+    ap.add_argument("--server", default=default_server(), help="the soft-agent binary; target/release/soft-agent when left out")
+    ap.add_argument("--engine-folder", default=default_engine_folder(), help="the engine folder; ~/.logix/soft-agent/engine-data when left out")
     ap.add_argument("--cwd", default=os.getcwd(), help="the folder relative paths start from (debug-panel.sh passes it)")
     args = ap.parse_args()
 

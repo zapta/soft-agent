@@ -9,8 +9,27 @@ script decides what to call.
 """
 
 import json
+import os
 import subprocess
 import sys
+
+
+def default_server():
+    """The repo's release build: target/release/soft-agent (.exe on
+    Windows), as `cargo build --release` makes it."""
+    exe = "soft-agent.exe" if os.name == "nt" else "soft-agent"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(repo, "target", "release", exe)
+
+
+def default_engine_folder():
+    """The scripts' engine folder, as scripts/_rust-env.sh has it:
+    $SOFT_AGENT_DATA_FOLDER, else $SOFT_AGENT_HOME/engine-data, else
+    ~/.logix/soft-agent/engine-data."""
+    if os.environ.get("SOFT_AGENT_DATA_FOLDER"):
+        return os.environ["SOFT_AGENT_DATA_FOLDER"]
+    home = os.environ.get("SOFT_AGENT_HOME") or os.path.join(os.path.expanduser("~"), ".logix", "soft-agent")
+    return os.path.join(home, "engine-data")
 
 
 class ToolFailed(Exception):
@@ -25,6 +44,8 @@ class ToolFailed(Exception):
 
 class SoftAgent:
     def __init__(self, server, engine_folder, client_name="soft-agent-script"):
+        if not os.path.isfile(server):
+            sys.exit(f"No soft-agent at {server}: build it first, with `cargo build --release` in the repo.")
         self.proc = subprocess.Popen(
             [server, "--engine-folder", engine_folder],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
@@ -81,9 +102,16 @@ def board_port(sa, build_folder=None):
     given), and its device id; exits with a message when there isn't
     exactly one."""
     args = {"build_folder": build_folder} if build_folder else {}
-    devices = [d for d in sa.tool("list_devices", args).get("devices", [])
+    found = sa.tool("list_devices", args)
+    devices = [d for d in found.get("devices", [])
                if d.get("serial_port") and (build_folder or d.get("likely_boards"))]
     if not devices:
+        # Seen but not openable, such as on Linux before its udev rule.
+        for u in found.get("unreachable", []):
+            print(u.get("note", f"{u['id']} can't be opened."), file=sys.stderr)
+            print(f"  To fix it: python scripts/tool.py install_driver device={u['id']}", file=sys.stderr)
+        if found.get("unreachable"):
+            sys.exit("The board can't be opened yet: see above.")
         sys.exit("No board found: connect the board with its USB cable and try again.")
     if len(devices) > 1:
         names = ", ".join(f"{d['serial_port']} ({d.get('who', d['id'])})" for d in devices)
