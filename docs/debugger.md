@@ -480,13 +480,20 @@ move unchanged; only where the code lives changes. To keep that easy:
 
 Open as of 2026-11-25, to be gone over one at a time:
 
-- [ ] **Families beyond iCE40.** `debug_build` refuses other families
-  (`build.rs`). Its iCE40-only parts are the pre-pass, which reads
-  `+/ice40/cells_sim.v`, and the size estimate, which runs `synth_ice40`.
-  The debugger's Verilog is meant to be generic, but it has been built only
-  for iCE40. Decide, for each family the engine supports, whether it is
-  supported or refused with a clear error, and test the supported ones on a
-  board.
+- [ ] **Every family the engine supports.** `debug_build` refuses
+  families other than iCE40 (`build.rs`). Its iCE40-only parts are the
+  pre-pass, which reads `+/ice40/cells_sim.v`, and the size estimate, which
+  runs `synth_ice40`; both need the family's own cells and synth command. The
+  debugger's Verilog is meant to be generic. A board needs no catalog UART:
+  the uplink's `tx` and `rx` can be any pins, wired to a USB serial adapter.
+  Test each toolchain on one board:
+  - [x] **IceStorm (iCE40).** Tested on the Alhambra II and the iCESugar
+    v1.5.
+  - [ ] **Trellis (ECP5).** Make it build, then test on one ECP5 board.
+  - [ ] **Apicula (Gowin GW1N, GW2A, GW5A).** Make it build, then test on
+    one Gowin board.
+  - [ ] **openXC7 (Artix-7, Spartan-7, Zynq-7000).** Make it build, then
+    test on one 7-series board.
 - [ ] **Board data in the catalog.** The UART and the clock already come
   from the board's catalog resources (`uart`, `clock`). Check which Logix
   Catalog boards have a `uart` resource the debugger can use, and say in the
