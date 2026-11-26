@@ -482,7 +482,10 @@ name = "two_pins"
         if std::env::var_os("UPDATE_SCHEMA").is_some() {
             std::fs::write(path, schema_json()).unwrap();
         }
-        let on_disk = std::fs::read_to_string(path).unwrap_or_default();
+        // Git on Windows may check the file out with CRLF line endings.
+        let on_disk = std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         assert!(
             on_disk == schema_json(),
             "schemas/logix-debug-v1.json is out of date: run UPDATE_SCHEMA=1 cargo test schema_file"
