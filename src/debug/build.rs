@@ -1044,6 +1044,7 @@ fn debug_top(
     let _ = writeln!(v, "  wire [{}:0] logix_dbg_rd;", read_w.max(1) - 1);
     let _ = writeln!(v, "  wire [{}:0] logix_dbg_wr;", write_w.max(1) - 1);
     let _ = writeln!(v, "  wire [{}:0] logix_dbg_en;", enables.max(1) - 1);
+    let _ = writeln!(v, "  wire [{}:0] logix_dbg_pl;", enables.max(1) - 1);
     for (net, width) in &wires {
         let _ = writeln!(v, "  wire [{}:0] {}; // {net}", width - 1, wire_of[net]);
     }
@@ -1064,11 +1065,12 @@ fn debug_top(
             let w = design.widths[p];
             let value = format!("logix_dbg_wr[{}:{}]", top_bit - 1, top_bit - w);
             top_bit -= w;
-            let driven = format!(
-                "logix_dbg_en[{}] ? {value} : {}",
-                o.enable_bit,
-                signal(p)
-            );
+            let b = o.enable_bit;
+            let mut driven = format!("logix_dbg_en[{b}] ? {value} : {}", signal(p));
+            // A one-bit entry can pulse: its value flips for one clock.
+            if o.width == 1 {
+                driven = format!("logix_dbg_pl[{b}] ^ ({driven})");
+            }
             conns.push(format!(".{}({driven})", vid(&format!("{p}.i"))));
         }
     }
@@ -1090,7 +1092,7 @@ fn debug_top(
     let _ = writeln!(v, "  assign logix_dbg_rd = {rd};\n");
     let _ = writeln!(
         v,
-        "  logix_debugger #(\n      .CLKS_PER_BIT({}),\n      .READ_W({}),\n      .WRITE_W({}),\n      .OVR_W({}),\n      .BUILD_ID(32'h{id:08x})\n  ) u_logix_debugger (\n      .clk({}),\n      .rx({RX_PORT}),\n      .tx({TX_PORT}),\n      .rd_in(logix_dbg_rd),\n      .wr_out(logix_dbg_wr),\n      .ovr_en(logix_dbg_en)\n  );\n\nendmodule",
+        "  logix_debugger #(\n      .CLKS_PER_BIT({}),\n      .READ_W({}),\n      .WRITE_W({}),\n      .OVR_W({}),\n      .BUILD_ID(32'h{id:08x})\n  ) u_logix_debugger (\n      .clk({}),\n      .rx({RX_PORT}),\n      .tx({TX_PORT}),\n      .rd_in(logix_dbg_rd),\n      .wr_out(logix_dbg_wr),\n      .ovr_en(logix_dbg_en),\n      .pulse(logix_dbg_pl)\n  );\n\nendmodule",
         link.clks_per_bit,
         read_w.max(1),
         write_w.max(1),

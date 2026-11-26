@@ -194,8 +194,9 @@ net = "main.u_ctrl.state"
   taking it over from the design and releasing it back (see the next
   section). Until 2026-11-25 a `mode` key chose between `override` and
   `source`; it is gone, and a file that still has it gets an error. How a
-  value is applied over time, such as a steady value or a pulse, is a
-  separate question from this coupling, for later.
+  value is applied over time is a separate question from this coupling:
+  a write holds a steady value until release, and a one-bit entry can
+  also pulse (Pulses, in the next section). Neither needs a key.
 
 For the capture phase, the file gains a `capture` section alongside `watch`
 and `drive` (signals, depth, trigger, sample clock). Version 1 reserves the
@@ -246,6 +247,20 @@ Writes:
   notes), overriding covered it safely, so `source` was removed, and with
   it the `mode` key. A driven net with no driver of its own is now
   refused.
+
+- **Pulses** (added 2026-11-25, protocol 3): every one-bit drive entry can
+  pulse, which flips the net's value for exactly one clock, whatever it is
+  then: the host's 0 or 1 while driven, the design's own value while
+  released. Afterwards the net is as it was. The debugger times it, since
+  the UART can't time one clock: a PULSE command loads a mask into a
+  register that is high for one clock. The net's load side is then
+  `pulse ^ (en ? value : design)`, one XOR and one flip-flop per one-bit
+  entry; wider entries and lists get neither, and `debug_write` refuses to
+  pulse them. Watch samples far slower than a clock, so a pulse doesn't
+  show there; its effects do. A pulse on a register's output also feeds
+  that register's next value, as an override does, so pulses suit control
+  inputs best (start, step, clear). In the Alhambra II example, a pulse on
+  `step_now` steps the frozen light once.
 
 ### Naming rules (version 1)
 
@@ -313,7 +328,7 @@ nets.
   handshake for buses (R11).
 - **Size:** measured on the blinky milestone.
 
-### Protocol (version 2)
+### Protocol (version 3)
 
 The protocol works on 8-bit bytes. Read nets are packed, in map order, into
 one little-endian bit vector, the read space; write nets likewise into the
@@ -335,6 +350,7 @@ not silence, so the host never waits for a timeout on a well-formed frame.
 | OVERRIDE | 0x05 | byte offset (2), bytes of the enable mask | none; one enable bit per write net, in write-net order |
 | READ_WRITES | 0x06 | byte offset (2), count (1) | bytes of the write registers, as the debugger holds them |
 | READ_ENABLES | 0x07 | byte offset (2), count (1) | bytes of the override enables, as the debugger holds them |
+| PULSE | 0x08 | byte offset (2), bytes of a mask in the enables' layout | none; each set bit's pulse is high for exactly one clock, all of them in the same clock, once the frame's last byte is in. Only one-bit write nets use theirs |
 | CAPTURE\_\* (next phase) | 0x10 and up | arm, trigger, status, read | capture data in blocks |
 
 Status: 0 OK, 1 bad CRC, 2 unknown command, 3 bad length or range.
@@ -399,9 +415,9 @@ debug map. All are soft-agent extension tools in the engine's style
 | `debug_build` | Builds with a debug file: inserts the debugger, then the usual synthesis, place and route, packing | Same fields as `build`, plus `debug_file`; writes `debug_map.json` and reports the debugger's resources apart |
 | `debug_open` | Opens a session on a board's debugger, from a build folder and a serial port | Reads the debugger's build ID first and refuses a mismatch (R8) |
 | `debug_read` | Reads named nets, in one snapshot | Values as numbers and as bit strings, with widths |
-| `debug_write` | Writes a named net, or releases an override back to the design | Refuses names that aren't in drive |
+| `debug_write` | Writes a named net, releases an override back to the design, or pulses a one-bit net | Refuses names that aren't in drive, and pulses on nets wider than one bit |
 | `debug_close` | Ends the session | |
-| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused, then Plot, a live strip chart of the watched values; each watched row shows its value in a format chosen per row (hex, decimal or binary); each driven net has value and release controls (0 and 1 buttons for one bit) |
+| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused, then Plot, a live strip chart of the watched values; each watched row shows its value in a format chosen per row (hex, decimal or binary); each driven net has value and release controls (0, 1 and Pulse buttons for one bit) |
 
 - **The port is shared.** The debugger owns the UART while a session is open,
   so the engine's `open_serial` on the same port is refused in version 1. A
@@ -536,7 +552,8 @@ of a variable shift, and register the reply byte.
   `debug_map.json`.
 - **Sessions:** `debug_open` checks the build ID and the read and write
   sizes, then releases every override and clears the write registers.
-  `debug_close` releases them too. Protocol 2 (2026-11-25) added
+  `debug_close` releases them too. Protocol 3 (2026-11-25) added PULSE.
+  Protocol 2 (2026-11-25) added
   READ_WRITES and READ_ENABLES: `debug_write` reports the state it reads
   back after writing, and the panel reads the drive state back from the
   board at every refresh, so it shows what the debugger really drives. When

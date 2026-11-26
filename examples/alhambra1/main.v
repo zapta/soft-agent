@@ -3,7 +3,8 @@
 // 12 MHz clock.
 //
 // It is ready for the debugger: debug.toml names the nets to watch and drive,
-// and `freeze` below is a spare control input for the debugger to drive.
+// and `freeze` and `step_now` below are spare control inputs for the
+// debugger to drive.
 
 module main #(
     // Clock cycles per step: 3,000,000 at 12 MHz is a quarter second.
@@ -24,10 +25,15 @@ module main #(
   // debugger can take it over from the panel (debug.toml).
   wire freeze = 1'b0;
 
+  // Steps the light once in each clock it is 1, frozen or not. The design
+  // keeps it 0; the panel's Pulse makes it 1 for a single clock.
+  wire step_now = 1'b0;
+
   // The lit LED, moving one place left at each step and wrapping around.
   reg [7:0] pattern = 8'b0000_0001;
 
-  always @(posedge sys_clk) if (step && !freeze) pattern <= {pattern[6:0], pattern[7]};
+  always @(posedge sys_clk)
+    if ((step && !freeze) || step_now) pattern <= {pattern[6:0], pattern[7]};
 
   assign leds = pattern;
 

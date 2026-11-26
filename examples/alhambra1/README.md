@@ -61,6 +61,10 @@ board is connected.
 - **Freeze the light:** click **1** on the `freeze` row. The light stops,
   and `pattern` in Watch stops changing; click **0**, or **Release**, to
   let it run.
+- **Step it by hand:** with the light frozen, click **Pulse** on the
+  `step_now` row. `step_now` is 1 for a single clock, and the light moves
+  one place. Pulse flips a one-bit net for one clock, driven or released,
+  so it works on `freeze` too, though too briefly to see.
 - **Take over the LEDs:** type a pattern on the `leds` row, such as
   `10101010` (it's in binary: one digit per LED, LED7 first), and click
   **Drive**. The LEDs show your pattern. Click **Release** to give them back.

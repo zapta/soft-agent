@@ -396,6 +396,11 @@
           b.onclick = () => write({ name: o.name, value: Number(v) });
           box.append(b);
         }
+        const p = document.createElement("button");
+        p.textContent = "Pulse";
+        p.title = `Flip ${o.name} for one clock, driven or released`;
+        p.onclick = () => write({ name: o.name, pulse: true });
+        box.append(p);
       } else {
         inp = document.createElement("input");
         inp.type = "text";

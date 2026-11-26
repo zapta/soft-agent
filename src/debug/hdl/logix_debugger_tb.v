@@ -19,6 +19,16 @@ module logix_debugger_tb;
   reg [19:0] rd_in = 20'hABCDE;
   wire [11:0] wr_out;
   wire [1:0] ovr_en;
+  wire [1:0] pulse;
+
+  // Clocks each pulse output was high, and the last pulse's value.
+  integer pulse_clocks = 0;
+  reg [1:0] pulse_seen = 2'b00;
+  always @(posedge clk)
+    if (pulse != 0) begin
+      pulse_clocks = pulse_clocks + 1;
+      pulse_seen = pulse;
+    end
 
   logix_debugger #(
       .CLKS_PER_BIT(CPB),
@@ -32,7 +42,8 @@ module logix_debugger_tb;
       .tx(host_rx),
       .rd_in(rd_in),
       .wr_out(wr_out),
-      .ovr_en(ovr_en)
+      .ovr_en(ovr_en),
+      .pulse(pulse)
   );
 
   function [7:0] crc8;
@@ -145,7 +156,7 @@ module logix_debugger_tb;
     // INFO
     frame(8'h01, 0, 0);
     expect_status(0, 9);
-    if (rep[0] !== 2) $fatal(1, "protocol %0d", rep[0]);
+    if (rep[0] !== 3) $fatal(1, "protocol %0d", rep[0]);
     if ({rep[4], rep[3], rep[2], rep[1]} !== ID) $fatal(1, "build ID");
     if ({rep[6], rep[5]} !== 3 || {rep[8], rep[7]} !== 2) $fatal(1, "sizes");
 
@@ -197,6 +208,22 @@ module logix_debugger_tb;
     req[2] = 8'h00;
     frame(8'h05, 3, 0);
     if (ovr_en !== 2'b00) $fatal(1, "ovr_en %b", ovr_en);
+
+    // PULSE: high for exactly one clock, only the masked bit, and the
+    // override enables are untouched.
+    req[0] = 0; req[1] = 0; req[2] = 8'h01;
+    pulse_clocks = 0;
+    frame(8'h08, 3, 0);
+    expect_status(0, 0);
+    if (pulse_clocks !== 1 || pulse_seen !== 2'b01) $fatal(1, "pulse %0d clocks, %b", pulse_clocks, pulse_seen);
+    if (ovr_en !== 2'b00) $fatal(1, "pulse changed ovr_en %b", ovr_en);
+    req[2] = 8'h03;
+    pulse_clocks = 0;
+    frame(8'h08, 3, 0);
+    if (pulse_clocks !== 1 || pulse_seen !== 2'b11) $fatal(1, "pulse both %0d clocks, %b", pulse_clocks, pulse_seen);
+    req[0] = 1; req[1] = 0; req[2] = 8'h01;
+    frame(8'h08, 3, 0);
+    expect_status(3, 0);
 
     // Bad CRC, unknown command, bad length.
     frame(8'h01, 0, 1);

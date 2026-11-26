@@ -1,4 +1,4 @@
-// Logix debugger, protocol version 1 (docs/debugger.md, Debugger hardware).
+// Logix debugger (docs/debugger.md, Debugger hardware).
 //
 // A register-map debugger behind a UART: the host sends frames, the
 // debugger answers them. Plain Verilog-2005 with no FPGA primitives, so it
@@ -12,8 +12,10 @@
 // 04 WRITE (offset lo, offset hi, bytes), 05 OVERRIDE (offset lo, offset hi,
 // bytes of the enable mask), 06 READ_WRITES and 07 READ_ENABLES (offset lo,
 // offset hi, count: the write registers and the override enables as the
-// debugger holds them). Status: 0 OK, 1 bad CRC, 2 unknown command,
-// 3 bad length or range.
+// debugger holds them), 08 PULSE (offset lo, offset hi, bytes of a mask in
+// the enables' layout: each set bit's pulse output is high for exactly one
+// clock, all of them in the same clock). Status: 0 OK, 1 bad CRC,
+// 2 unknown command, 3 bad length or range.
 
 module logix_debugger #(
     parameter integer CLKS_PER_BIT = 104,  // clock Hz / baud
@@ -27,10 +29,11 @@ module logix_debugger #(
     output wire               tx,
     input  wire [ READ_W-1:0] rd_in,
     output wire [WRITE_W-1:0] wr_out,
-    output wire [  OVR_W-1:0] ovr_en
+    output wire [  OVR_W-1:0] ovr_en,
+    output wire [  OVR_W-1:0] pulse   // one clock high, per write net
 );
 
-  localparam [7:0] PROTOCOL = 8'd2;
+  localparam [7:0] PROTOCOL = 8'd3;
   localparam integer READ_BYTES = (READ_W + 7) / 8;
   localparam integer WRITE_BYTES = (WRITE_W + 7) / 8;
   localparam integer OVR_BYTES = (OVR_W + 7) / 8;
@@ -69,8 +72,14 @@ module logix_debugger #(
   reg [WRITE_BYTES*8-1:0] wr_reg = 0;
   reg [  OVR_BYTES*8-1:0] en_reg = 0;
 
+  // A pulse's mask collects here, a byte a cycle, then fires at once.
+  reg [  OVR_BYTES*8-1:0] pls_pend = 0;
+  reg [  OVR_BYTES*8-1:0] pls_reg = 0;
+  reg                     pls_fire = 1'b0;
+
   assign wr_out = wr_reg[WRITE_W-1:0];
   assign ovr_en = en_reg[OVR_W-1:0];
+  assign pulse = pls_reg[OVR_W-1:0];
 
   function [7:0] crc8;
     input [7:0] c;
@@ -134,7 +143,7 @@ module logix_debugger #(
   reg sent = 1'b0;  // a byte was just handed to the transmitter
 
   // Writes, one byte a cycle.
-  reg wsel = 1'b0;  // 0: write registers, 1: override enables
+  reg [1:0] wsel = 2'd0;  // 0: write registers, 1: override enables, 2: pulse mask
   reg [15:0] woff = 16'h0000;
   reg [7:0] wn = 8'h00;
   reg [7:0] wi = 8'h00;
@@ -174,6 +183,8 @@ module logix_debugger #(
   integer j;
   always @(posedge clk) begin
     tx_start <= 1'b0;
+    pls_fire <= 1'b0;
+    pls_reg  <= pls_fire ? pls_pend : {OVR_BYTES * 8{1'b0}};
 
     // Frames that stop arriving mid-way are dropped.
     if (state == S_SYNC || rx_valid) idle <= 0;
@@ -239,11 +250,12 @@ module logix_debugger #(
                 rlen <= p_count;
                 roff <= p_off;
               end
-              8'h04, 8'h05:
+              8'h04, 8'h05, 8'h08:
               if (len < 3 || p_off + (len - 8'd2) > (cmd == 8'h04 ? WRITE_BYTES : OVR_BYTES))
                 status <= 8'd3;
               else begin
-                wsel  <= (cmd == 8'h05);
+                wsel  <= (cmd == 8'h04) ? 2'd0 : (cmd == 8'h05) ? 2'd1 : 2'd2;
+                if (cmd == 8'h08) pls_pend <= 0;
                 woff  <= p_off;
                 wn    <= len - 8'd2;
                 wi    <= 8'd0;
@@ -254,10 +266,16 @@ module logix_debugger #(
         end
         S_WRITE: begin
           for (j = 0; j < WRITE_BYTES; j = j + 1)
-          if (!wsel && woff + wi == j) wr_reg[j*8+:8] <= p_byte;
-          for (j = 0; j < OVR_BYTES; j = j + 1) if (wsel && woff + wi == j) en_reg[j*8+:8] <= p_byte;
+          if (wsel == 2'd0 && woff + wi == j) wr_reg[j*8+:8] <= p_byte;
+          for (j = 0; j < OVR_BYTES; j = j + 1) begin
+            if (wsel == 2'd1 && woff + wi == j) en_reg[j*8+:8] <= p_byte;
+            if (wsel == 2'd2 && woff + wi == j) pls_pend[j*8+:8] <= p_byte;
+          end
           wi <= wi + 1'b1;
-          if (wi + 1'b1 == wn) state <= S_REPLY;
+          if (wi + 1'b1 == wn) begin
+            if (wsel == 2'd2) pls_fire <= 1'b1;
+            state <= S_REPLY;
+          end
         end
         S_REPLY:
         if (sent) sent <= 1'b0;  // let busy rise first

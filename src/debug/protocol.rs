@@ -4,7 +4,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u8 = 2;
+pub const PROTOCOL_VERSION: u8 = 3;
 pub const SYNC_HOST: u8 = 0xA5;
 pub const SYNC_REPLY: u8 = 0x5A;
 
@@ -17,6 +17,9 @@ pub const OVERRIDE: u8 = 0x05;
 /// them.
 pub const READ_WRITES: u8 = 0x06;
 pub const READ_ENABLES: u8 = 0x07;
+/// Protocol 3: flips one-bit nets for one clock; a mask in the enables'
+/// layout.
+pub const PULSE: u8 = 0x08;
 
 /// Bytes of data one WRITE or OVERRIDE carries (the debugger keeps 8
 /// payload bytes, 2 of them the offset).

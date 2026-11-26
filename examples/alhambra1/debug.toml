@@ -28,6 +28,12 @@ format = "bin"
 name = "freeze"
 net = "main.freeze"
 
+# Step the light once: Pulse makes it 1 for exactly one clock. Freeze the
+# light first to see each step.
+[[drive]]
+name = "step_now"
+net = "main.step_now"
+
 # watch: nets you read, live, in the panel.
 
 [[watch]]

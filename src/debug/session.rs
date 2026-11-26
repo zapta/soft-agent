@@ -589,7 +589,8 @@ impl EngineTool for DebugWrite {
     const DESCRIPTION: &'static str = "Drives a net of the running design through a debug \
         session: one of its drive names from debug_open. Writing takes the net over from the \
         design until release; release gives it back. The value is a number, or a string in hex (0x..), binary (0b..) \
-        or decimal, and must fit the net's width.";
+        or decimal, and must fit the net's width. pulse, for a one-bit net, flips its value for one \
+        clock, whether it is driven or released, and leaves it as it was.";
     const READ_ONLY: bool = false;
     type Input = DebugWriteInput;
     type Output = DebugWriteOutput;
@@ -608,6 +609,10 @@ pub struct DebugWriteInput {
     /// Give an override net back to the design. Defaults to false.
     #[serde(default)]
     pub release: bool,
+    /// For a one-bit net: flip its value for one clock, driven or released,
+    /// then leave it as it was. Defaults to false.
+    #[serde(default)]
+    pub pulse: bool,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -643,6 +648,33 @@ pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
                 ))
             })?;
         let bit = o.enable_bit;
+        if input.pulse {
+            if input.value.is_some() || input.release {
+                return Err(ToolError::request(
+                    "Give one of value, release and pulse.",
+                ));
+            }
+            if o.width != 1 {
+                return Err(ToolError::request(format!(
+                    "{} is {} bits: only a one-bit net can pulse.",
+                    o.name, o.width
+                )));
+            }
+            // The pulse and the read-back, in one batch.
+            let mut payload = ((bit / 8) as u16).to_le_bytes().to_vec();
+            payload.push(1 << (bit % 8));
+            let mut frames: Vec<Frame> = vec![(protocol::PULSE, payload)];
+            frames.extend(read_back_frames(s));
+            let replies = transact_many(s, &frames)?;
+            take_read_back(s, &replies[1..])?;
+            let driven = protocol::get_bits(&s.en, bit, 1)[0];
+            let held = protocol::get_bits(&s.wr, o.offset, o.width);
+            return Ok(DebugWriteOutput {
+                name: o.name.clone(),
+                driven,
+                hex: driven.then(|| net_value(&o.name, &o.net, &held).hex),
+            });
+        }
         if input.release {
             if input.value.is_some() {
                 return Err(ToolError::request("Give value or release, not both."));
