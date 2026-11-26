@@ -75,7 +75,11 @@
   /* A pulse the board took: the state pill flashes, then fades back. */
   .pill.flash { animation: flash 175ms ease-out; }
   @keyframes flash {
-    0%, 25% { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+    0%, 25% {
+      background: color-mix(in srgb, var(--accent) 50%, white);
+      border-color: color-mix(in srgb, var(--accent) 50%, white);
+      color: #1a1a18;
+    }
   }
   button, input[type=text] {
     font: inherit; border-radius: 6px; border: 1px solid var(--line);
