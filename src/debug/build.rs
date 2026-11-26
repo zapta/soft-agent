@@ -119,9 +119,32 @@ pub struct DebugBuildOutput {
 pub struct DebuggerUse {
     pub luts: u32,
     pub flip_flops: u32,
-    /// For people, such as "The debugger uses about 460 LUTs and 250
-    /// flip-flops of that."
+    /// Each as a share of the FPGA's logic cells, each of which has one
+    /// LUT and one flip-flop on iCE40, such as "8%": rounded up, so "0%"
+    /// only when none. Omitted when the build didn't report the cells.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub luts_percent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flip_flops_percent: Option<String>,
+    /// For people, such as "The debugger uses about 460 LUTs (9%) and 250
+    /// flip-flops (5%) of the FPGA's 5280 logic cells."
     pub report: String,
+}
+
+/// The FPGA's logic cells, from the engine build's resources (iCE40's
+/// ICESTORM_LC: one LUT and one flip-flop each).
+fn logic_cells(build: &Value) -> Option<u64> {
+    build["resources"]
+        .as_array()?
+        .iter()
+        .find(|r| r["name"] == "ICESTORM_LC")?["available"]
+        .as_u64()
+        .filter(|&n| n > 0)
+}
+
+/// A share, rounded up as the engine's reports do: "0%" only for none.
+fn percent(used: u32, total: u64) -> String {
+    format!("{}%", (used as u64 * 100).div_ceil(total))
 }
 
 pub async fn run(
@@ -281,7 +304,7 @@ pub async fn run(
         &out.join(protocol::MAP_FILE),
         &(serde_json::to_string_pretty(&map).unwrap_or_default() + "\n"),
     )?;
-    let debugger = debugger_use(&map, &link, &gen_dir, &bin, call).await;
+    let debugger = debugger_use(&map, &link, &gen_dir, &bin, call, logic_cells(&value)).await;
 
     Ok(DebugBuildOutput {
         build: value,
@@ -1048,6 +1071,7 @@ async fn debugger_use(
     gen_dir: &Path,
     bin: &Path,
     call: &Call,
+    cells: Option<u64>,
 ) -> DebuggerUse {
     let read_w = map.watch.iter().map(|i| i.width).sum::<usize>().max(1);
     let write_w = map.drive.iter().map(|o| o.width).sum::<usize>().max(1);
@@ -1086,14 +1110,22 @@ async fn debugger_use(
             }
         }
     }
-    let report = if luts == 0 {
-        "The debugger's own share couldn't be measured.".to_string()
-    } else {
-        format!("The debugger uses about {luts} LUTs and {ffs} flip-flops of that.")
+    let luts_percent = cells.map(|c| percent(luts, c));
+    let flip_flops_percent = cells.map(|c| percent(ffs, c));
+    let report = match (luts, cells) {
+        (0, _) => "The debugger's own share couldn't be measured.".to_string(),
+        (_, Some(c)) => format!(
+            "The debugger uses about {luts} LUTs ({}) and {ffs} flip-flops ({}) of the FPGA's {c} logic cells.",
+            percent(luts, c),
+            percent(ffs, c)
+        ),
+        (_, None) => format!("The debugger uses about {luts} LUTs and {ffs} flip-flops of that."),
     };
     DebuggerUse {
         luts,
         flip_flops: ffs,
+        luts_percent,
+        flip_flops_percent,
         report,
     }
 }
@@ -1202,6 +1234,14 @@ mod tests {
         let e = config::parse("clock = \"c\"\nuplink = { kind = \"uart\"\n").unwrap_err();
         let err = file_error("debug.toml", &e);
         assert_eq!(err.diagnostics[0].line, Some(2), "{e}");
+    }
+
+    #[test]
+    fn percents_round_up() {
+        assert_eq!(percent(550, 7680), "8%");
+        assert_eq!(percent(1, 7680), "1%");
+        assert_eq!(percent(0, 7680), "0%");
+        assert_eq!(percent(7680, 7680), "100%");
     }
 
     #[test]
