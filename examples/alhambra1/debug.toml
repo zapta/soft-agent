@@ -7,7 +7,8 @@ clock = "sys_clk"
 
 # The board's UART, by its name in the board catalog: the FTDI chip's second
 # channel, over the same USB cable that programs the board.
-uplink = { kind = "uart", resource = "uart", baud = 115200 }
+# 1,000,000 baud: exactly 12 clocks a bit from the 12 MHz clock.
+uplink = { kind = "uart", resource = "uart", baud = 1000000 }
 
 # Net paths start with the top module, main. A net has any width; a list
 # combines one-bit nets and pins into one bus.
