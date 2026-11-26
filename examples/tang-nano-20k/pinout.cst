@@ -1,0 +1,5 @@
+// Tang Nano 20K pins: the 27 MHz clock and the user LED (active low).
+IO_LOC "sys_clk" 4;
+IO_PORT "sys_clk" IO_TYPE=LVCMOS33;
+IO_LOC "led" 15;
+IO_PORT "led" IO_TYPE=LVCMOS33;

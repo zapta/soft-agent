@@ -25,7 +25,8 @@ the overview, how to run it and how to bump the engine.
   agent, through `scripts/softagent.py`, a small MCP client.
 - `examples/`: projects friends can run with no AI agent, each with a
   README; `examples/alhambra1` is the Alhambra II one, the one shared with
-  friends, and `examples/icesugar-pro` tests ECP5. Keep them working
+  friends; `examples/icesugar-pro` tests ECP5 and `examples/tang-nano-20k`
+  Gowin. Keep them working
   with the scripts, and their READMEs right.
 
 ## Rules
