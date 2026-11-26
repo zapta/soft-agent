@@ -71,7 +71,9 @@ examples/alhambra1/run.sh
 ```
 
 It builds soft-agent, builds the design with the debugger, programs the board
-and opens the debug panel; its README says what to try. Any project folder
+and opens the debug panel; its README says what to try. Starting from
+scratch, with none of the tools installed? Its
+[TUTORIAL.md](examples/alhambra1/TUTORIAL.md) goes through it step by step. Any project folder
 with a `logix.json`, sources and a `debug.toml` works the same way:
 `scripts/debug-run.sh PROJECT_FOLDER`.
 
