@@ -28,6 +28,13 @@ format = "bin"
 name = "enable_step"
 net = "main.enable_step"
 
+# Take over the LED itself: 1 lights it and 0 turns it off, whatever the
+# pattern. Release gives it back to the running light. (The debugger drives
+# internal nets, not the led port, so this is main.v's led_on.)
+[[drive]]
+name = "led"
+net = "main.led_on"
+
 # watch: nets you read, live, in the panel.
 
 [[watch]]
@@ -46,3 +53,8 @@ format = "dec"
 [[watch]]
 name = "step_enabled"
 net = "main.enable_step"
+
+# The LED pin's level: 0 while it is lit (active low).
+[[watch]]
+name = "led_level"
+net = "main.led"

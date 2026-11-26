@@ -39,8 +39,10 @@ module main #(
     due <= step || (due && !take);
   end
 
-  // The LED shows place 0. It is active low.
-  assign led = ~pattern[0];
+  // The LED shows place 0: led_on is 1 to light it. The pin is active low.
+  // In a debug build the debugger can take over led_on (debug.toml).
+  wire led_on = pattern[0];
+  assign led = ~led_on;
 
 endmodule
 
