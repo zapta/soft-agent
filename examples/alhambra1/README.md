@@ -57,18 +57,14 @@ board is connected.
 
 - **Watch** shows the design live: `pattern` is the lit LED, `timer` counts
   to 3,000,000 four times a second, and `step` is 1 for a single clock
-  cycle at each step, so you'll rarely catch it. `step_enabled` and
-  `cycle_enabled` show what the design sees of the two enables,
-  `enable_step` and `enable_cycle`: 1, unless you drive them to 0.
+  cycle at each step, so you'll rarely catch it. `step_enabled` shows
+  what the design sees of `enable_step`: 1, unless you drive it to 0.
 - **Hold the light:** click **0** on the `enable_step` row. The light stops
   where it is, and `step_enabled` in Watch shows 0; click **1**, or
   **Release**, to let it run.
 - **Step it by hand:** while it's held, click **Pulse** on the
   `enable_step` row. `enable_step` is 1 for a single clock, and the light
   moves one place.
-- **Hold it at the end of each cycle:** click **0** on the `enable_cycle`
-  row. The light runs to LED7 and stays there; **Pulse** starts one new
-  cycle, and **Release** lets it run on.
 - **Take over the LEDs:** type a pattern on the `leds` row, such as
   `10101010` (it's in binary: one digit per LED, LED7 first), and click
   **Drive**. The LEDs show your pattern. Click **Release** to give them back.

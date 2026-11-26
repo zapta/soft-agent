@@ -28,12 +28,6 @@ format = "bin"
 name = "enable_step"
 net = "main.enable_step"
 
-# Hold the light at the end of each cycle: 0 stops it at LED7, and Pulse
-# starts one new cycle. The design holds it at 1; Release gives it back.
-[[drive]]
-name = "enable_cycle"
-net = "main.enable_cycle"
-
 # watch: nets you read, live, in the panel.
 
 [[watch]]
@@ -51,12 +45,8 @@ format = "dec"
 name = "step"
 net = "main.step"
 
-# The two enables, as the design sees them: 1 unless driven to 0. Names are
-# unique across drive and watch, so these differ from the drive entries'.
+# The enable, as the design sees it: 1 unless driven to 0. Names are unique
+# across drive and watch, so this differs from the drive entry's.
 [[watch]]
 name = "step_enabled"
 net = "main.enable_step"
-
-[[watch]]
-name = "cycle_enabled"
-net = "main.enable_cycle"
