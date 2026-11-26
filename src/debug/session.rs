@@ -591,9 +591,8 @@ pub struct DebugWrite;
 impl EngineTool for DebugWrite {
     const NAME: &'static str = "debug_write";
     const DESCRIPTION: &'static str = "Drives a net of the running design through a debug \
-        session: one of its drive names from debug_open. For an override one, writing takes the \
-        net over from the design until release; release gives it back. A source one is \
-        always the debugger's. The value is a number, or a string in hex (0x..), binary (0b..) \
+        session: one of its drive names from debug_open. Writing takes the net over from the \
+        design until release; release gives it back. The value is a number, or a string in hex (0x..), binary (0b..) \
         or decimal, and must fit the net's width.";
     const READ_ONLY: bool = false;
     type Input = DebugWriteInput;
@@ -654,8 +653,8 @@ pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
             }
             let Some(bit) = o.enable_bit else {
                 return Err(ToolError::request(format!(
-                    "{} is in source mode: only the debugger drives it, so it can't be released.",
-                    o.name
+                    "{} is in {} mode, which has no release.",
+                    o.name, o.mode
                 )));
             };
             protocol::set_bits(&mut s.en, bit, &[false]);

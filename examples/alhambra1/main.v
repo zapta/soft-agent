@@ -3,8 +3,7 @@
 // 12 MHz clock.
 //
 // It is ready for the debugger: debug.toml names the nets to watch and drive,
-// and `freeze` below is a source net, driven only by the debugger in a debug
-// build.
+// and `freeze` below is a spare control input for the debugger to drive.
 
 module main #(
     // Clock cycles per step: 3,000,000 at 12 MHz is a quarter second.
@@ -21,14 +20,9 @@ module main #(
       .tick(step)
   );
 
-  // Stops the light while 1. In a debug build (debug_build defines
-  // LOGIX_DEBUG) nothing in the design drives it: the debugger does, from
-  // the panel (debug.toml, mode = "source"). In a normal build it is 0.
-`ifdef LOGIX_DEBUG
-  wire freeze;
-`else
+  // Stops the light while 1. The design keeps it 0; in a debug build the
+  // debugger can take it over from the panel (debug.toml).
   wire freeze = 1'b0;
-`endif
 
   // The lit LED, moving one place left at each step and wrapping around.
   reg [7:0] pattern = 8'b0000_0001;

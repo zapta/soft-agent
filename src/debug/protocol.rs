@@ -167,10 +167,9 @@ pub struct MapDrive {
     /// The debug file's format for showing it (hex, dec or bin), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
-    /// override or source.
+    /// How the debugger drives it: override, the only mode for now.
     pub mode: String,
-    /// Its bit in the override enables; none for source mode, which is
-    /// always on.
+    /// Its bit in the override enables; none for a mode with no release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_bit: Option<usize>,
 }

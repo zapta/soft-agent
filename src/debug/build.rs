@@ -624,8 +624,11 @@ async fn prepass(
     call: &Call,
 ) -> Result<Design, ToolError> {
     let q = |p: &Path| format!("\"{}\"", p.to_string_lossy());
+    // No optimization before the cut: proc's own opt_expr and opt_clean put
+    // a constant net's value straight into its loads (`wire en = 1'b0;`),
+    // leaving the net with nothing to drive. Synthesis optimizes later.
     let mut script = format!(
-        "read_verilog -lib +/ice40/cells_sim.v; hierarchy -top {top}; proc; flatten; opt_clean; \
+        "read_verilog -lib +/ice40/cells_sim.v; hierarchy -top {top}; proc -noopt; flatten; \
          select {top}; write_json -selected {pre}; select -clear; ",
         top = input.top_module,
         pre = q(&gen_dir.join("pre.json"))
@@ -633,19 +636,25 @@ async fn prepass(
     for (net, _) in nets {
         let _ = write!(script, "select -assert-count 1 {}; ", pattern(net));
     }
-    let reads: Vec<String> = nets.iter().map(|(n, _)| pattern(n)).collect();
-    let _ = write!(script, "expose {}; ", reads.join(" "));
     let cuts: Vec<String> = nets
         .iter()
         .filter(|(_, m)| m.is_some())
         .map(|(n, _)| pattern(n))
         .collect();
+    // A driven net set by a plain connection, such as to a constant, gets a
+    // buffer cell: expose -cut needs a driver cell to cut at, and would
+    // otherwise move the net's loads onto the constant.
+    if !cuts.is_empty() {
+        let _ = write!(script, "insbuf {}; ", cuts.join(" "));
+    }
+    let reads: Vec<String> = nets.iter().map(|(n, _)| pattern(n)).collect();
+    let _ = write!(script, "expose {}; ", reads.join(" "));
     if !cuts.is_empty() {
         let _ = write!(script, "expose -cut {}; ", cuts.join(" "));
     }
     let _ = write!(
         script,
-        "write_verilog -noattr {v}; select {top}; write_json -selected {post}",
+        "opt_clean; write_verilog -noattr {v}; select {top}; write_json -selected {post}",
         v = q(&gen_dir.join("design_debug.v")),
         top = input.top_module,
         post = q(&gen_dir.join("post.json"))
@@ -656,8 +665,7 @@ async fn prepass(
         "-p".into(),
         script.into(),
         "-DSYNTHESIZE".into(),
-        // Lets a design differ in debug builds, such as a source net with
-        // no driver there and a default in normal builds.
+        // Lets a design differ in debug builds.
         "-DLOGIX_DEBUG".into(),
     ];
     if !input.verbose {
@@ -730,9 +738,8 @@ async fn prepass(
         let bits = |name: &str| module["ports"][name]["bits"].clone();
         let cut_ok = mode.is_none()
             || (port(&format!("{net}.i")).is_some() && bits(net) != bits(&format!("{net}.i")));
-        // A driven net must still reach something: yosys replaces a net set
-        // to a constant with its value while reading, and the debugger would
-        // then drive nothing.
+        // A driven net must still reach something, or the debugger would
+        // drive nothing.
         if mode.is_some()
             && cut_ok
             && !used(module, &bits(&format!("{net}.i")), &format!("{net}.i"))
@@ -740,7 +747,17 @@ async fn prepass(
             return Err(ToolError::new(
                 Category::Design,
                 format!(
-                    "Nothing in the design uses {}.{net} once yosys has read it, so driving it would change nothing. A net set to a constant, such as `wire {net} = 1'b0;`, is replaced by its value while reading. For a source net, give it no driver in debug builds: `ifdef LOGIX_DEBUG, which debug_build defines.",
+                    "Nothing in the design uses {}.{net}, so driving it would change nothing: debug a net the design reads.",
+                    input.top_module
+                ),
+            ));
+        }
+        // A driven net needs a value of its own for when it is released.
+        if mode.is_some() && cut_ok && !driven(module, &bits(net)) {
+            return Err(ToolError::new(
+                Category::Design,
+                format!(
+                    "Nothing in the design drives {}.{net}, so released it would have no value. Give it one for the debugger to override, such as `wire {net} = 1'b0;`.",
                     input.top_module
                 ),
             ));
@@ -788,6 +805,38 @@ fn used(module: &Value, bits: &Value, own: &str) -> bool {
         .as_object()
         .is_some_and(|ports| ports.iter().any(|(n, p)| n != own && hit(&p["bits"])));
     in_cells || in_ports
+}
+
+/// Whether every bit of a net has a driver: a constant, a cell's output or
+/// one of the module's inputs.
+fn driven(module: &Value, bits: &Value) -> bool {
+    let Some(bits) = bits.as_array() else {
+        return false;
+    };
+    let mut drivers: Vec<&Value> = Vec::new();
+    if let Some(cells) = module["cells"].as_object() {
+        for c in cells.values() {
+            let Some(conns) = c["connections"].as_object() else {
+                continue;
+            };
+            for (port, list) in conns {
+                if c["port_directions"][port].as_str() != Some("input") {
+                    drivers.extend(list.as_array().into_iter().flatten());
+                }
+            }
+        }
+    }
+    if let Some(ports) = module["ports"].as_object() {
+        for p in ports.values() {
+            if p["direction"].as_str() == Some("input") {
+                drivers.extend(p["bits"].as_array().into_iter().flatten());
+            }
+        }
+    }
+    bits.iter().all(|b| match b.as_str() {
+        Some(c) => c == "0" || c == "1",
+        None => drivers.contains(&b),
+    })
 }
 
 /// The pre-pass's failure, in the user's terms.

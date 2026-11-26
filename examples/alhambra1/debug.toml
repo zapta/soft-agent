@@ -23,12 +23,12 @@ net = "main.pattern"
 mode = "override"
 format = "bin"
 
-# Stop the light: 1 freezes it, 0 lets it run. A source net: only the
-# debugger drives it (see main.v).
+# Stop the light: 1 freezes it, 0 lets it run. The design holds it at 0
+# (see main.v); Release gives it back.
 [[drive]]
 name = "freeze"
 net = "main.freeze"
-mode = "source"
+mode = "override"
 
 # watch: nets you read, live, in the panel.
 

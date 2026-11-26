@@ -191,9 +191,9 @@ net = "main.u_ctrl.state"
   omitted means `dec` for one bit, so a bit shows as `1`, and `hex` for
   more. In the panel, each row's Format menu changes it; a choice made
   there is remembered by name in that browser and wins over the file's.
-- `mode` of a drive entry: `override` (the debugger can take over a net the
-  design drives, and releases it back to the design) or `source` (a net
-  with no driver in the design, driven only by the debugger). See the next
+- `mode` of a drive entry: optional, and `override` (the debugger can
+  take over a net the design drives, and releases it back to the design),
+  the only mode and the default. The key stays for later modes. See the next
   section.
 
 For the capture phase, the file gains a `capture` section alongside `watch`
@@ -224,26 +224,7 @@ override mux.
 
 Writes, by mode:
 
-- **source:** the debugger drives a net nothing else drives (a spare
-  control input), starting at 0; there is nothing to release. The net must
-  have no driver in the debug build. A net set to a constant
-  (`wire white = 1'b0;`) doesn't work: yosys replaces it with its value
-  while reading the file, so nothing would use the net, and the build
-  refuses it with an error saying so. Instead, debug builds define
-  `LOGIX_DEBUG`, so a design can leave the net undriven there and give it a
-  default elsewhere:
-
-  ```verilog
-  `ifdef LOGIX_DEBUG
-    wire white;          // the debugger drives it (mode = "source")
-  `else
-    wire white = 1'b0;   // normal builds
-  `endif
-  ```
-
-  Tested on the iCESugar v1.5 on 2026-11-25: `white` lights all three LED
-  colors.
-- **override:** the debugger can take over a net the design drives, through a
+- **override**, the only mode: the debugger can take over a net the design drives, through a
   mux at that net's driver, released by default. With option A the build cuts
   the net and inserts the mux itself, a netlist edit (Build integration).
   Every load of the net sees the driven value, the design's own logic
@@ -251,6 +232,18 @@ Writes, by mode:
   value, through its logic and its hold path, so after a release the
   register carries on from the driven value (seen on the Alhambra II
   example's running light, 2026-11-25).
+
+  A spare control input, a net the design only reads, is a net set to a
+  default and overridden: `wire white = 1'b0;`. Released, it is the
+  default, and a normal build, which has no debugger, gets the same.
+
+  Until 2026-11-25 there was also a `source` mode, for a net with no driver
+  in the debug build, driven only by the debugger. A design had to leave
+  the net undriven under `ifdef LOGIX_DEBUG` and give it a default
+  elsewhere, and one that left it undriven in normal builds too had an
+  undefined net there. Once the pre-pass kept constant nets (Implementation
+  notes), `override` covered it safely, and `source` was removed. A driven
+  net with no driver of its own is now refused.
 
 ### Naming rules (version 1)
 
@@ -464,7 +457,7 @@ move unchanged; only where the code lives changes. To keep that easy:
 | Q1 | File format: JSON, JSONC, TOML or a `.pcf`-like text file? | TOML with a generated schema, as Logix IDE's project file; it was JSONC until 2026-11-25 |
 | Q2 | Where nets are chosen: the file, the design, or both? | The debug file only for now; marking in the design later |
 | Q3 | How the debugger gets in: a yosys pre-pass, soft-agent's own build, or an engine hook? | Yosys pre-pass now (no engine change); an engine hook when moving it |
-| Q4 | Writes: `source` only first, or `override` of driven nets too? | Both, if yosys `expose -cut` works as expected; else `source` first (`source`, as Intel's In-System Sources, was called `register` until 2026-11-25) |
+| Q4 | Writes: `source` only first, or `override` of driven nets too? | Both, if yosys `expose -cut` works as expected; else `source` first (`source`, as Intel's In-System Sources, was called `register` until 2026-11-25). `source` was removed on 2026-11-25: `override` of a net with a default does the same, safely |
 | Q5 | Debugger clock: always the board clock, or any net? | One clock for the UART and the debugger, the board's clock resource by default; every watched and driven net must be on it |
 | Q6 | The UART when the design uses it too? | Refuse in version 1; console channel later |
 | Q7 | Baud rate? | 115200 now; measure the iCESugar's bridge at 1 Mbaud and up later. Measured 2026-11-25: both boards reliable at 1,000,000 (see Batches) |
@@ -512,14 +505,23 @@ of a variable shift, and register the reply byte.
   debugger's Verilog and its testbench).
 - **Defines:** the pre-pass reads the sources with `SYNTHESIZE`, as the
   engine's build does, and `LOGIX_DEBUG`, which only debug builds define.
-- **Driven nets must be used:** after the cut, a driven net's loads must
-  still read it (a cell or a top-level port); otherwise driving it would
-  change nothing, and the build refuses it.
-- **Aliases:** the pre-pass runs `opt_clean` after `flatten`, so a net
-  that is only an alias (`wire red_on = ~sw_n[0];`) is driven by its cell
-  directly. Without it, `expose -cut` connected such a net to its own cut
-  side, a combinational loop. The build also refuses any cut net whose
-  driver and loads still share bits.
+- **Driven nets must be used and driven:** after the cut, a driven net's
+  loads must still read it (a cell or a top-level port), or driving it
+  would change nothing; and the net must have a driver of its own (a cell,
+  a constant or an input), or released it would have no value. The build
+  refuses either.
+- **No optimization before the cut:** the pre-pass runs `proc -noopt` and
+  no `opt_clean` until after the cut. `proc`'s own `opt_expr` and
+  `opt_clean` put a constant net's value into its loads
+  (`wire white = 1'b0;`), leaving the net nothing to drive; synthesis
+  optimizes later.
+- **Buffers on driven nets:** before the cut, `insbuf` on the driven nets
+  turns a plain connection, to a constant or another net, into a buffer
+  cell. `expose -cut` needs a driver cell to cut at: without one it moved
+  a constant net's loads onto the constant, and connected an alias
+  (`wire red_on = ~sw_n[0];`) to its own cut side, a combinational loop.
+  The build also refuses any cut net whose driver and loads still share
+  bits.
 - **Families:** iCE40 only. The pre-pass loads the family's cell library
   (`+/ice40/cells_sim.v`) as black boxes, so `expose -cut` knows which ports of
   primitives such as `SB_RGBA_DRV` are inputs. Without it, a cut net kept

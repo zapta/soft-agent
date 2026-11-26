@@ -59,7 +59,8 @@ board is connected.
   to 3,000,000 four times a second, and `step` is 1 for a single clock
   cycle at each step, so you'll rarely catch it.
 - **Freeze the light:** click **1** on the `freeze` row. The light stops,
-  and `pattern` in Watch stops changing; click **0** to let it run.
+  and `pattern` in Watch stops changing; click **0**, or **Release**, to
+  let it run.
 - **Take over the LEDs:** type a pattern on the `leds` row, such as
   `10101010` (it's in binary: one digit per LED, LED7 first), and click
   **Drive**. The LEDs show your pattern. Click **Release** to give them back.

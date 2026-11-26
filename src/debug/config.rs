@@ -162,10 +162,10 @@ pub struct DriveNet {
     #[serde(skip)]
     #[schemars(skip)]
     pub parts: Vec<String>,
-    /// override: the debugger can take over a net the design drives, and
-    /// release it back. source: only the debugger drives it, a net nothing
-    /// in the design drives, such as a spare control input. Defaults
-    /// to override.
+    /// How the debugger drives the net. override, the only mode and the
+    /// default: the debugger can take over the net from the design, and
+    /// release it back. Give a spare control input a default, such as
+    /// `wire en = 1'b0;`, and override it.
     #[serde(default)]
     pub mode: DriveMode,
 }
@@ -175,14 +175,12 @@ pub struct DriveNet {
 pub enum DriveMode {
     #[default]
     Override,
-    Source,
 }
 
 impl DriveMode {
     pub fn as_str(self) -> &'static str {
         match self {
             DriveMode::Override => "override",
-            DriveMode::Source => "source",
         }
     }
 }
