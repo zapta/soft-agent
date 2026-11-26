@@ -41,10 +41,6 @@ name = "timer"
 net = "main.u_ticker.count"
 format = "dec"
 
-[[watch]]
-name = "step"
-net = "main.step"
-
 # The enable, as the design sees it: 1 unless driven to 0. Names are unique
 # across drive and watch, so this differs from the drive entry's.
 [[watch]]

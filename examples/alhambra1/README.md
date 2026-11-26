@@ -56,8 +56,7 @@ board is connected.
 ## Things to try in the panel
 
 - **Watch** shows the design live: `pattern` is the lit LED, `timer` counts
-  to 3,000,000 four times a second, and `step` is 1 for a single clock
-  cycle at each step, so you'll rarely catch it. `step_enabled` shows
+  to 3,000,000 four times a second, and `step_enabled` shows
   what the design sees of `enable_step`: 1, unless you drive it to 0.
 - **Hold the light:** click **0** on the `enable_step` row. The light stops
   where it is, and `step_enabled` in Watch shows 0; click **1**, or
@@ -74,7 +73,7 @@ board is connected.
 - **Plot**, under Watch, draws the watched values over the last seconds or
   minutes: set the refresh rate to 20 or 50 per second for smoother lines,
   and point at the plot to see a moment's values. It only sees what each
-  read sees, so `step`'s one-cycle pulses rarely show.
+  read sees, so a pulse, one clock long, doesn't show.
 - **Pause** stops the live updates and freezes the plot; **Read now** reads
   once.
 
