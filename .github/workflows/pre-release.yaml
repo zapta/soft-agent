@@ -1,0 +1,195 @@
+# Builds soft-agent on macOS (Apple Silicon), Windows (x64) and Linux (x64)
+# and publishes the builds as a GitHub pre-release tagged with the date,
+# pre-yyyy-mm-dd. A pre-release with the same tag is replaced, so the day's
+# is from its latest commit; only the newest 5 pre-releases are kept.
+#
+# Each platform's archive is the repo's files at that commit (scripts,
+# examples, docs) with the program at target/release/, where the scripts
+# look for it: unpack it and run the Python scripts, with no Rust and no
+# git (README.md, Without bash, and other scripts).
+#
+# Runs on every push to main, and by hand. A newer run cancels a running
+# one: only the latest commit's build matters.
+
+name: pre-release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pre-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-latest
+            exe: soft-agent
+            archive: tgz
+            python: python3
+          - platform: windows-x86-64
+            runner: windows-2025
+            exe: soft-agent.exe
+            archive: zip
+            python: python
+          # The oldest Ubuntu GitHub offers: a program built against an
+          # older glibc runs on more Linux distributions.
+          - platform: linux-x86-64
+            runner: ubuntu-22.04
+            exe: soft-agent
+            archive: tgz
+            python: python3
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Installs the Rust version pinned in rust-toolchain.toml.
+      - name: Set up Rust
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - name: Cache Cargo's downloads and the build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ matrix.platform }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ matrix.platform }}-
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Check
+        run: |
+          cargo clippy --release --locked -- -D warnings
+          cargo test --release --locked
+
+      # One top-level folder, soft-agent/: the repo's files at this commit,
+      # and the program where the scripts find it.
+      - name: Make the archive
+        id: archive
+        run: |
+          set -euo pipefail
+          tag="pre-$(date -u +%Y-%m-%d)"
+          name="soft-agent-${{ matrix.platform }}-${tag}"
+          mkdir -p "_pkg/soft-agent/target/release"
+          git archive --format=tar HEAD | tar -x -C _pkg/soft-agent
+          cp "target/release/${{ matrix.exe }}" "_pkg/soft-agent/target/release/"
+          git rev-parse HEAD > _pkg/soft-agent/COMMIT
+          if [[ "${{ matrix.archive }}" == zip ]]; then
+            (cd _pkg && 7z a -tzip "../${name}.zip" soft-agent > /dev/null)
+            file="${name}.zip"
+          else
+            tar -czf "${name}.tgz" -C _pkg soft-agent
+            file="${name}.tgz"
+          fi
+          ls -l "$file"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+
+      # What testers get: the unpacked program starts, as the scripts start
+      # it, and answers as an MCP server.
+      - name: Check the archive
+        run: |
+          set -euo pipefail
+          mkdir _check
+          if [[ "${{ matrix.archive }}" == zip ]]; then
+            (cd _check && 7z x "../${{ steps.archive.outputs.file }}" > /dev/null)
+          else
+            tar -xzf "${{ steps.archive.outputs.file }}" -C _check
+          fi
+          "_check/soft-agent/target/release/${{ matrix.exe }}" --version
+          ${{ matrix.python }} -I _check/soft-agent/scripts/tool.py get_soft_agent_info \
+            --engine-folder "$RUNNER_TEMP/ci-engine-data"
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v7
+        with:
+          if-no-files-found: error
+          name: soft-agent-${{ matrix.platform }}
+          path: ${{ steps.archive.outputs.file }}
+
+  pre-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download the archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: soft-agent-*
+          merge-multiple: true
+          path: _artifacts
+
+      - name: Write the release notes
+        run: |
+          set -euo pipefail
+          tag="pre-$(date -u +%Y-%m-%d)"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          url="https://github.com/${GH_REPO}/releases/download/${tag}"
+          cat > NOTES.md <<EOF
+          soft-agent at \`${GITHUB_SHA::7}\`: Logix Engine with experimental extensions, including the in-design debugger. A test build, not a release.
+
+          Each archive holds the repo's files at that commit and the built program, at \`target/release/\`, where the scripts find it. You need Python 3, nothing else: no Rust and no git.
+
+          | Platform | Archive |
+          | --- | --- |
+          | macOS (Apple Silicon) | [soft-agent-darwin-arm64-${tag}.tgz](${url}/soft-agent-darwin-arm64-${tag}.tgz) |
+          | Windows (x64) | [soft-agent-windows-x86-64-${tag}.zip](${url}/soft-agent-windows-x86-64-${tag}.zip) |
+          | Linux (x64) | [soft-agent-linux-x86-64-${tag}.tgz](${url}/soft-agent-linux-x86-64-${tag}.tgz) |
+
+          Unpack it, then, in its \`soft-agent\` folder:
+
+          \`\`\`
+          python scripts/tool.py download_packages
+          python scripts/debug_check.py
+          \`\`\`
+
+          The first downloads the FPGA tools (about 3 GB, once); the second checks the debugger on a connected iCESugar v1.5. On macOS, clear the download flag first (\`xattr -c\` on the .tgz), since the program isn't signed. On Linux the board needs a udev rule first: \`python3 scripts/tool.py list_devices\`, then \`python3 scripts/tool.py install_driver device=<its id>\`.
+          EOF
+
+      # Replace the day's pre-release, never a stable release.
+      - name: Publish the pre-release
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --json isPrerelease -q .isPrerelease 2> /dev/null | grep -q false; then
+            echo "::error::$TAG is a stable release: not replacing it."
+            exit 1
+          fi
+          gh release delete "$TAG" --cleanup-tag --yes 2> /dev/null || true
+          gh release create "$TAG" _artifacts/* --prerelease --target "$GITHUB_SHA" \
+            --title "soft-agent ${TAG#pre-} (${GITHUB_SHA::7})" --notes-file NOTES.md
+
+      - name: Keep the newest 5 pre-releases
+        run: |
+          set -euo pipefail
+          gh release list --limit 100 --json tagName,isPrerelease,createdAt \
+            -q '[.[] | select(.isPrerelease)] | sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+            while read -r old; do
+              echo "Deleting $old"
+              gh release delete "$old" --cleanup-tag --yes
+            done

@@ -98,6 +98,15 @@ browser, and waits: Enter or Ctrl-C closes the session, releasing every
 override. It finds the connected board's serial port; give `--port` when
 there are several.
 
+## Pre-releases: built for every platform
+
+Every push to `main` builds soft-agent on macOS (Apple Silicon), Windows
+(x64) and Linux (x64) and publishes it as a
+[pre-release](https://github.com/zapta/soft-agent/releases), tagged
+`pre-yyyy-mm-dd` (`.github/workflows/pre-release.yaml`). Each archive holds
+the repo's files and the built program at `target/release/`, so the Python
+scripts below run from it with only Python 3: no Rust, no git.
+
 ## Without bash, and other scripts
 
 The Python scripts run on their own too, such as on Windows, after `cargo
