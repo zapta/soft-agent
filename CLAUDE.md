@@ -25,9 +25,10 @@ the overview, how to run it and how to bump the engine.
   agent, through `scripts/softagent.py`, a small MCP client.
 - `examples/`: projects friends can run with no AI agent, each with a
   README; `examples/alhambra1` is the Alhambra II one, the one shared with
-  friends; `examples/icesugar-pro` tests ECP5 and `examples/tang-nano-20k`
-  Gowin and `examples/arty-a7-35t` Xilinx. Keep them working
-  with the scripts, and their READMEs right.
+  friends; `examples/icesugar-1-5` is the iCESugar v1.5 one, the board the
+  debugger is tested on first; `examples/icesugar-pro` tests ECP5,
+  `examples/tang-nano-20k` Gowin and `examples/arty-a7-35t` Xilinx. Keep
+  them working with the scripts, and their READMEs right.
 
 ## Rules
 

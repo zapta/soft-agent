@@ -77,6 +77,13 @@ scratch, with none of the tools installed? Its
 with a `logix.json`, sources and a `debug.toml` works the same way:
 `scripts/debug-run.sh PROJECT_FOLDER`.
 
+The same running light is there for the
+[iCESugar v1.5](examples/icesugar-1-5), the board the debugger is tested on
+first, and for an ECP5, a Gowin and a Xilinx board
+([iCESugar Pro](examples/icesugar-pro),
+[Tang Nano 20K](examples/tang-nano-20k),
+[Arty A7-35T](examples/arty-a7-35t)).
+
 ## Debug panel from the shell
 
 For a debug build that is programmed on the board (`debug_build`, then

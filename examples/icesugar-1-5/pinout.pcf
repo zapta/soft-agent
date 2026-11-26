@@ -1,0 +1,13 @@
+# iCESugar v1.5 pins for main.v.
+
+# 12 MHz clock, from the on-board iCELink.
+set_io sys_clk 35
+
+# The RGB LED, on the RGB LED driver pads (active low): red, green, blue.
+# Newer boards have green and blue swapped from the schematic, as here.
+set_io rgb_led[0] 40
+set_io rgb_led[1] 39
+set_io rgb_led[2] 41
+
+# The debugger's UART (pins 6 and 4) is added by the debug build:
+# don't use those pins here.
