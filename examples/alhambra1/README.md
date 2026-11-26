@@ -14,7 +14,10 @@ board and opens the page.
 - About 5 GB of disk: the FPGA toolchain (3 GB, in `~/.logix/soft-agent`)
   and the Rust build (1 GB, in the repo's `target` folder).
 
-Then, once, from the repo's folder:
+Get the repo: `git clone https://github.com/zapta/soft-agent` (if macOS
+offers to install the command line tools for git, accept, then run the
+command again), or download it as a ZIP from GitHub's Code button. Then,
+once, from the repo's folder:
 
 ```sh
 ./install-deps.sh
