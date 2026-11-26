@@ -1152,6 +1152,20 @@ fn layout(
         });
         offset += width;
     }
+    // A READ reply carries the read nets, the write values and the enables.
+    let (read_bits, write_bits, enables) = (read_bits.max(1), offset.max(1), enables.max(1));
+    let reply_bits = read_bits + write_bits + enables;
+    if reply_bits.div_ceil(8) > protocol::MAX_PAYLOAD {
+        return Err(ToolError::new(
+            Category::Design,
+            format!(
+                "The debug file watches {read_bits} bits and drives {write_bits}, {} bytes with the enables; version 1 takes at most {} ({} bits): watch or drive fewer nets.",
+                reply_bits.div_ceil(8),
+                protocol::MAX_PAYLOAD,
+                protocol::MAX_PAYLOAD * 8
+            ),
+        ));
+    }
     Ok(DebugMap {
         format: protocol::MAP_FORMAT.into(),
         protocol: protocol::PROTOCOL_VERSION,
@@ -1164,9 +1178,9 @@ fn layout(
         uplink_resource: config.uplink.resource.clone(),
         tx_pin: link.tx.clone(),
         rx_pin: link.rx.clone(),
-        read_bytes: read_bits.max(1).div_ceil(8),
-        write_bytes: offset.max(1).div_ceil(8),
-        enable_bytes: enables.max(1).div_ceil(8),
+        read_bits,
+        write_bits,
+        enables,
         watch: inputs,
         drive: outputs,
     })

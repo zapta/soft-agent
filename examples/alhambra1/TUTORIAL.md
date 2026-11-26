@@ -99,18 +99,18 @@ It names each step as it goes:
 Ready.
 
 == Building main for the alhambra-ii with the debugger
-The design uses 946 of 7680 logic cells (13%).
+The design uses 373 of 7680 logic cells (5%).
 The design uses 1 of 32 RAM blocks (4%).
 The design uses 11 of 107 I/O pins (11%).
-Maximum clock speed: 69.5 MHz (sys_clk).
-The debugger uses about 544 LUTs (8%) and 320 flip-flops (5%) of the FPGA's 7680 logic cells.
-Build ID 41e100c9: drives leds, enable_step; watches pattern, timer, step_enabled.
+Maximum clock speed: 172.9 MHz (sys_clk).
+The debugger uses about 258 LUTs (4%) and 208 flip-flops (3%) of the FPGA's 7680 logic cells.
+Build ID 49108f4a: drives leds, enable_step; watches pattern, timer, step_enabled.
 
 == Programming the board
 Done.
 
 == Opening the debug panel
-Session debug1 on /dev/cu.usbserial-…, build 41e100c9
+Session debug1 on /dev/cu.usbserial-…, build 49108f4a
 Panel: http://127.0.0.1:…
 Press Enter to close the session (or Ctrl-C)...
 ```

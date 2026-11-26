@@ -4,28 +4,24 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u8 = 3;
+pub const PROTOCOL_VERSION: u8 = 1;
 pub const SYNC_HOST: u8 = 0xA5;
 pub const SYNC_REPLY: u8 = 0x5A;
 
+/// The protocol version and the build ID: 5 bytes.
 pub const INFO: u8 = 0x01;
-pub const SNAPSHOT: u8 = 0x02;
-pub const READ: u8 = 0x03;
-pub const WRITE: u8 = 0x04;
-pub const OVERRIDE: u8 = 0x05;
-/// Protocol 2: the write registers and the enables, as the debugger holds
-/// them.
-pub const READ_WRITES: u8 = 0x06;
-pub const READ_ENABLES: u8 = 0x07;
-/// Protocol 3: flips one-bit nets for one clock; a mask in the enables'
-/// layout.
-pub const PULSE: u8 = 0x08;
+/// A snapshot taken in one clock: the read nets, the write values and the
+/// enables, packed.
+pub const READ: u8 = 0x02;
+/// The write values and the enables, packed, all taking effect at once.
+pub const WRITE: u8 = 0x03;
+/// Flips one-bit nets for one clock: a mask of the enables' width.
+pub const PULSE: u8 = 0x04;
 
-/// Bytes of data one WRITE or OVERRIDE carries (the debugger keeps 8
-/// payload bytes, 2 of them the offset).
-pub const MAX_WRITE: usize = 6;
-/// Bytes one READ returns at most.
-pub const MAX_READ: usize = 128;
+/// The most bytes a frame's payload, or a reply's, can have.
+pub const MAX_PAYLOAD: usize = 255;
+/// The bytes of an INFO reply.
+pub const INFO_BYTES: usize = 5;
 
 /// CRC-8, polynomial 07, initial 00 (CRC-8/SMBUS), as the debugger has it.
 pub fn crc8(data: &[u8]) -> u8 {
@@ -125,10 +121,11 @@ pub struct DebugMap {
     pub baud: u32,
     pub tx_pin: String,
     pub rx_pin: String,
-    /// Bytes of the read space, the write space and the override enables.
-    pub read_bytes: usize,
-    pub write_bytes: usize,
-    pub enable_bytes: usize,
+    /// Bits of the read nets, of the write values and of the override
+    /// enables (one per driven entry). Each is at least 1.
+    pub read_bits: usize,
+    pub write_bits: usize,
+    pub enables: usize,
     /// The nets the debugger drives, in write-space order.
     pub drive: Vec<MapDrive>,
     /// The nets the debugger reads, in read-space order.
@@ -174,6 +171,14 @@ pub struct MapDrive {
     pub enable_bit: usize,
 }
 
+impl DebugMap {
+    /// Bytes of a READ reply: the read nets, the write values and the
+    /// enables, packed.
+    pub fn read_reply_bytes(&self) -> usize {
+        (self.read_bits + self.write_bits + self.enables).div_ceil(8)
+    }
+}
+
 pub const MAP_FORMAT: &str = "logix-debug-map-v1";
 pub const MAP_FILE: &str = "debug_map.json";
 
@@ -182,6 +187,13 @@ pub fn get_bits(bytes: &[u8], offset: usize, width: usize) -> Vec<bool> {
     (offset..offset + width)
         .map(|i| bytes.get(i / 8).is_some_and(|b| b >> (i % 8) & 1 == 1))
         .collect()
+}
+
+/// Bits packed low first into bytes, padded with zeros.
+pub fn pack(bits: &[bool]) -> Vec<u8> {
+    let mut bytes = vec![0u8; bits.len().div_ceil(8)];
+    set_bits(&mut bytes, 0, bits);
+    bytes
 }
 
 /// Sets bits `offset..` of a little-endian byte string to `bits`.
@@ -229,5 +241,6 @@ mod tests {
         );
         assert_eq!(b, vec![0xD0, 0x1F, 0x00]);
         assert_eq!(get_bits(&b, 4, 3), vec![true, false, true]);
+        assert_eq!(pack(&[true, false, true, true, true, true, true, true, true]), vec![0xFD, 0x01]);
     }
 }

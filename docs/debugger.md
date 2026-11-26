@@ -251,7 +251,7 @@ Writes:
   it the `mode` key. A driven net with no driver of its own is now
   refused.
 
-- **Pulses** (added 2026-11-25, protocol 3): every one-bit drive entry can
+- **Pulses** (added 2026-11-25): every one-bit drive entry can
   pulse, which flips the net's value for exactly one clock, whatever it is
   then: the host's 0 or 1 while driven, the design's own value while
   released. Afterwards the net is as it was. The debugger times it, since
@@ -320,48 +320,68 @@ nets.
  +---------------------------------------------+                           +-----------+
 ```
 
-- **Debug hub:** one snapshot register per read net, all loaded in the same
-  cycle on a SNAPSHOT command (R5); one register per write net, plus an
-  override enable per override net; a ROM with the build ID and protocol
-  version (R8).
+- **Debug hub:** one byte shift register, loaded in one cycle with the
+  read nets, the write values and the enables on a READ (R5), or with the
+  protocol version and build ID on an INFO (R8), and shifted out a byte at
+  a time as the reply goes; payloads come in through it too. One register
+  per write net, plus an override enable per write net, loaded together
+  from it once a WRITE frame's CRC checks out.
 - **Command engine + UART:** parses frames and answers them. At 12 MHz and
   115200 baud the divisor is 104 (0.16% off), well within UART tolerance.
-  A 64-byte receive buffer sits between the UART and the engine: the engine
-  takes input only while it waits for a frame, so bytes that arrive while
-  it executes or replies wait there. The host can therefore send several
-  frames at once.
+  A 64-byte receive buffer, in block RAM, sits between the UART and the
+  engine: the engine takes input only while it waits for a frame, so bytes
+  that arrive while it executes or replies wait there. The host can
+  therefore send several frames at once; it keeps at most 48 bytes on the
+  way, and the buffer has no full check.
+- **Built for size and speed** (2026-11-26): no variable shifts or byte
+  multiplexers (the shift register replaces them), one CRC for both ways
+  taking two clocks a byte, the byte compares the engine needs stored with
+  each byte in the receive buffer's spare RAM bits, one-hot states,
+  registered strobes, and timers whose sign bit is their tick. No path in
+  it is more than a few LUTs long. See the cost to-do for the numbers.
 - **Clock domains:** version 1 has one clock, shared by the UART and the
   debugger, and every watched and driven net must be on it. Nets from other
   domains come later, with synchronizers: two flip-flops for single bits, a
   handshake for buses (R11).
-- **Size:** measured on the blinky milestone.
 
-### Protocol (version 3)
+### Protocol (version 1)
 
-The protocol works on 8-bit bytes. Read nets are packed, in map order, into
-one little-endian bit vector, the read space; write nets likewise into the
-write space. The map gives each net's bit offset and width. The host moves
-bytes of those spaces.
+Versions start again at 1 on 2026-11-26 (the user: no compatibility while in
+early development); the protocol before it was called version 3.
+
+The protocol works on 8-bit bytes. A space is a little-endian bit vector,
+packed with no gaps and padded with zeros to whole bytes: the snapshot is
+the read nets in map order, then the write values in map order, then the
+override enables (one per driven entry); a WRITE payload is the write
+values, then the enables. The map gives each net's bit offset and width in
+its own part. Each part is at least one bit: a design with nothing driven
+still has one write bit and one enable.
 
 Frames from the host: `0xA5`, command, payload length (one byte), payload,
-CRC-8. Replies: `0x5A`, the same command, status, payload length, payload,
+CRC-8. Replies: `0x5A`, the command, status, payload length, payload,
 CRC-8. CRC-8 is polynomial 0x07, initial value 0, over every byte after the
 sync byte. A frame with a bad CRC or an unknown command gets a status error,
 not silence, so the host never waits for a timeout on a well-formed frame.
+A frame that stops arriving is dropped after 256 to 512 bit times (25 to 50
+bytes).
 
 | Command | Code | Request payload | Reply payload |
 | --- | --- | --- | --- |
-| INFO | 0x01 | none | protocol version (1 byte), build ID (4 bytes, little-endian), read space bytes (2), write space bytes (2) |
-| SNAPSHOT | 0x02 | none | none; all read nets latched in one cycle |
-| READ | 0x03 | byte offset (2), count (1) | bytes of the snapshot |
-| WRITE | 0x04 | byte offset (2), bytes | none; writes the write registers |
-| OVERRIDE | 0x05 | byte offset (2), bytes of the enable mask | none; one enable bit per write net, in write-net order |
-| READ_WRITES | 0x06 | byte offset (2), count (1) | bytes of the write registers, as the debugger holds them |
-| READ_ENABLES | 0x07 | byte offset (2), count (1) | bytes of the override enables, as the debugger holds them |
-| PULSE | 0x08 | byte offset (2), bytes of a mask in the enables' layout | none; each set bit's pulse is high for exactly one clock, all of them in the same clock, once the frame's last byte is in. Only one-bit write nets use theirs |
+| INFO | 0x01 | none | protocol version (1 byte), build ID (4 bytes, little-endian) |
+| READ | 0x02 | none | the snapshot, taken in one clock: read nets, write values, enables |
+| WRITE | 0x03 | the write values and the enables, all of them | none; all take effect in the same clock, once the CRC checks out |
+| PULSE | 0x04 | a mask of the enables' width | none; each set bit's pulse is high for exactly one clock, all of them in the same clock. Only one-bit write nets use theirs |
 | CAPTURE\_\* (next phase) | 0x10 and up | arm, trigger, status, read | capture data in blocks |
 
-Status: 0 OK, 1 bad CRC, 2 unknown command, 3 bad length or range.
+Status: 0 OK, 1 bad CRC, 2 unknown command, 3 bad length. A reply to an
+unknown command has command 0x00. A READ reply is at most 255 bytes, so a
+build refuses more than 2040 bits of read nets, write values and enables
+together.
+
+There are no offsets: the host reads everything in one READ and writes
+everything in one WRITE, from its copy of the write values and enables,
+which each READ refreshes. The INFO reply has no sizes, since the build ID
+covers the map.
 
 At 115200 baud the link carries about 11.5 KB/s: reads feel instant, but an
 8 KB capture would take about 0.7 s, which is why faster rates are measured
@@ -603,12 +623,35 @@ Open as of 2026-11-25, to be gone over one at a time:
   an iCE40 `SB_HFOSC`'s output, with `clock_mhz` required, for boards with
   no clock pin whose oscillator is accurate enough (Boards). Today it must
   be a top-level input port.
-- [ ] **Cost.** On the Alhambra II example, the design went from 43 to 946
-  logic cells and from 188.4 to 69.5 MHz. That fits an HX8K but not small
-  parts. Make it smaller (see the next steps under First milestone), keep
-  it off the design's timing path, and report the measured difference
-  between the builds, not the estimate (544 LUTs and 320 flip-flops, against
-  903 cells measured).
+- [x] **Cost** (done 2026-11-26). The debugger was rebuilt for size and
+  speed (Debugger hardware), with protocol 1. Measured as the difference
+  between a normal build and a debug build of each example (the Alhambra
+  II's design, also built for the iCESugar v1.5 with its LEDs on PMOD 2;
+  31 bits watched, 9 driven), placed and routed by the engine's build:
+
+  | Board (FPGA) | Normal build | Debug build, before | Debug build, now |
+  | --- | --- | --- | --- |
+  | iCESugar v1.5 (iCE40 UP5K) | 43 cells, 73.7 MHz | +882 cells, 24.6 MHz | +330 cells, 69.9 MHz |
+  | Alhambra II (iCE40 HX4K) | 43 cells, 188.4 MHz | +903 cells, 69.5 MHz | +330 cells, 173 to 185 MHz |
+  | iCESugar Pro (ECP5) | 39 LUTs, 223.7 MHz | +915 LUTs, 85.1 MHz | +469 LUTs, 206.5 MHz |
+  | Tang Nano 20K (Gowin) | 71 LUTs and FFs, 277.6 MHz | +1,210, 87.2 MHz | +664, 238.4 MHz |
+  | Arty A7-35T (Xilinx) | 95 LUTs and FFs, 274.7 MHz | +1,091, 142.6 MHz | +608, 292.9 MHz |
+
+  On iCE40 the debugger is now about 265 logic cells plus one per watched
+  or driven bit, and one RAM block. Alone (31 read bits, 9 write bits, 2
+  enables), placed with three nextpnr seeds, it reaches 80 to 85 MHz on
+  the UP5K and 172 to 196 MHz on the HX8K, as fast as the example design
+  itself: on the iCESugar v1.5 the debug build's slowest path is the
+  design's own counter. What is left of the drop comes from placement and
+  from the watched nets' extra loads, and varies with the seed. The
+  Alhambra II's maximum clock was 173 to 185 MHz over the builds made while
+  measuring. On ECP5 the receive buffer is in LUT RAM, so it costs more
+  LUTs there. `debug_build`'s report still gives the debugger's own LUTs
+  and flip-flops from synthesizing it alone (258 and 208 on iCE40), which
+  pack into fewer cells than their sum. Tested on the iCESugar v1.5 at
+  1,000,000 baud: reads, writes, releases, holds and one-clock pulses as
+  before, 300 reads with no errors. The other families' examples were
+  built, not tested on their boards.
 - [ ] **Where the panel goes.** The engine is a backend for other tools.
   Decide whether the browser panel moves with it, goes to Logix IDE, or
   stays here as a reference, with only the session tools in the engine.
@@ -641,6 +684,7 @@ Open as of 2026-11-25, to be gone over one at a time:
 | Q8 | Several debug files per project, merged? | One file per build request |
 | Q9 | Where the schema lives? | In this repo, under `schemas/` |
 | Q10 | Naming rules? | Full instance paths starting with the top module (`main.u_ctrl.state`), or `pin.<pin>` for package pins, whole nets, generate names as yosys prints them, no wildcards (see Naming rules) |
+| Q11 | Versions and compatibility before release? | None kept while in early development (the user, 2026-11-26): the protocol started again at version 1 then, and a change may break older builds, which are refused and built again |
 
 ## First milestone
 
@@ -672,7 +716,8 @@ The debugger is above the 300-cell target and halves the blinky's maximum
 clock. Both come mostly from its byte-wide muxes over the read and write
 spaces (variable shifts) and the reply byte mux. Next steps for size and
 speed: address the spaces a byte at a time through a shift register instead
-of a variable shift, and register the reply byte.
+of a variable shift, and register the reply byte. Done on 2026-11-26, with more:
+see the cost to-do under To do before porting.
 
 ## Implementation notes (version 1)
 
@@ -727,17 +772,17 @@ of a variable shift, and register the reply byte.
   and `logix_debugger.v`.
   The engine's `build` builds them into the build folder, next to
   `debug_map.json`.
-- **Sessions:** `debug_open` checks the build ID and the read and write
-  sizes, then releases every override and clears the write registers.
-  `debug_close` releases them too. Protocol 3 (2026-11-25) added PULSE.
-  Protocol 2 (2026-11-25) added
-  READ_WRITES and READ_ENABLES: `debug_write` reports the state it reads
-  back after writing, and the panel reads the drive state back from the
-  board at every refresh, so it shows what the debugger really drives. When
-  the board doesn't answer, the panel shows the last state written, marked
+- **Sessions:** `debug_open` checks the build ID, then releases every
+  override and clears the write registers. `debug_close` releases them
+  too. Every READ reply carries the write values and enables as the
+  debugger holds them: `debug_write` reports the state it reads back after
+  writing, and the panel reads the drive state back from the board at
+  every refresh, so it shows what the debugger really drives. When the
+  board doesn't answer, the panel shows the last state written, marked
   "unconfirmed". Tested on the iCESugar: reprogramming the board under an
   open session restarted it, and the panel's next read showed the override
-  released. A build made for protocol 1 is refused: build it again.
+  released. A build made before protocol 1 (2026-11-26) is refused: build
+  it again.
   Every `debug_read` and `debug_write` asks the debugger for its build ID
   first (one INFO frame, about a millisecond), and refuses when the board
   was programmed with another build after `debug_open`, since the session's
@@ -755,11 +800,13 @@ of a variable shift, and register the reply byte.
 - **Batches:** the host sends each operation's frames in one write, up to
   48 bytes (the receive buffer holds 64), and then reads the replies in
   order, so an operation pays the USB serial chip's round trip once: a
-  `debug_read` is INFO, SNAPSHOT and READ together; a `debug_write` is an
-  INFO first (nothing is written to another build), then the WRITE,
-  OVERRIDE and read-backs together; a panel refresh is two batches. A
+  `debug_read` is INFO and READ together; a `debug_write` is an INFO first
+  (nothing is written to another build), then a WRITE (or PULSE) and a
+  READ together; a panel refresh is two batches. A
   refused frame doesn't end a batch early: its other replies are still read,
-  so none is left on the line. Measured 2026-11-25:
+  so none is left on the line. Measured 2026-11-25 (protocol 3); with
+  protocol 1, on 2026-11-26, the iCESugar v1.5 at 1,000,000 baud measured
+  1.03 ms a `debug_read` (970/s) and 2.0 ms a `debug_write`, the same:
 
   | Board (USB serial chip) | `debug_read` | `debug_write` | Panel refresh |
   | --- | --- | --- | --- |
@@ -791,10 +838,10 @@ of a variable shift, and register the reply byte.
   no simple way to.
 - **Build ID:** a hash of the generated design, the debug map and the
   debugger's own Verilog, so a board with an older debugger is refused.
-- **Limits:** a READ returns up to 128 bytes and a WRITE carries 6; the host
-  splits larger spaces. A frame that stops arriving is dropped after about
-  25 byte times. The port isn't locked against the engine's serial tools, so
-  don't open both on one port.
+- **Limits:** a READ reply is at most 255 bytes, so a build takes at most
+  2040 bits of watched nets, driven values and enables together. A frame
+  that stops arriving is dropped after 25 to 50 byte times. The port isn't
+  locked against the engine's serial tools, so don't open both on one port.
 - **Progress:** `debug_build` reports no progress while it runs yet.
 - **The plot:** the panel's Plot section draws every read's watched values
   over the last 10 seconds to 5 minutes: one bit as a high/low trace, more

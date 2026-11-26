@@ -30,6 +30,15 @@ module logix_debugger_tb;
       pulse_seen = pulse;
     end
 
+  // wr_out and ovr_en must change together, in one clock.
+  reg [13:0] last_out = 14'h0;
+  integer out_changes = 0;
+  always @(posedge clk)
+    if ({ovr_en, wr_out} !== last_out) begin
+      out_changes = out_changes + 1;
+      last_out = {ovr_en, wr_out};
+    end
+
   logix_debugger #(
       .CLKS_PER_BIT(CPB),
       .READ_W(20),
@@ -90,8 +99,6 @@ module logix_debugger_tb;
   reg [7:0] rep[0:255];
   integer rep_len, rep_status;
 
-  // Sends a frame of n payload bytes from req, with a CRC (bad if
-  // corrupt), and reads the reply into rep.
   // Sends a frame of n payload bytes from req, with a CRC (bad if corrupt).
   task send_frame(input [7:0] command, input integer n, input corrupt);
     integer i;
@@ -150,114 +157,111 @@ module logix_debugger_tb;
     end
   endtask
 
+  // A READ: the read nets, the write values and the enables, packed: bits
+  // 0-19, 20-31 and 32-33 of 5 bytes.
+  task expect_read(input [19:0] r, input [11:0] w, input [1:0] e);
+    reg [39:0] got;
+    begin
+      expect_status(0, 5);
+      got = {rep[4], rep[3], rep[2], rep[1], rep[0]};
+      if (got !== {6'd0, e, w, r}) $fatal(1, "read %h, expected %h", got, {6'd0, e, w, r});
+    end
+  endtask
+
   initial begin
     repeat (20) @(posedge clk);
 
     // INFO
     frame(8'h01, 0, 0);
-    expect_status(0, 9);
-    if (rep[0] !== 3) $fatal(1, "protocol %0d", rep[0]);
+    expect_status(0, 5);
+    if (rep[0] !== 1) $fatal(1, "protocol %0d", rep[0]);
     if ({rep[4], rep[3], rep[2], rep[1]} !== ID) $fatal(1, "build ID");
-    if ({rep[6], rep[5]} !== 3 || {rep[8], rep[7]} !== 2) $fatal(1, "sizes");
 
-    // SNAPSHOT, then the nets change, then READ sees the snapshot.
+    // READ: a snapshot, taken when the frame is in.
     frame(8'h02, 0, 0);
-    expect_status(0, 0);
+    expect_read(20'hABCDE, 12'h000, 2'b00);
     rd_in = 20'h12345;
-    req[0] = 0; req[1] = 0; req[2] = 3;
-    frame(8'h03, 3, 0);
-    expect_status(0, 3);
-    if ({rep[2], rep[1], rep[0]} !== 24'h0ABCDE) $fatal(1, "read %h%h%h", rep[2], rep[1], rep[0]);
-    req[0] = 1; req[1] = 0; req[2] = 2;
-    frame(8'h03, 3, 0);
-    expect_status(0, 2);
-    if ({rep[1], rep[0]} !== 16'h0ABC) $fatal(1, "read at offset");
+    frame(8'h02, 0, 0);
+    expect_read(20'h12345, 12'h000, 2'b00);
 
-    // READ past the end.
-    req[0] = 2; req[1] = 0; req[2] = 2;
+    // WRITE: values and enables in one clock, read back by READ. Packed:
+    // 12 bits of values, then 2 of enables.
+    req[0] = 8'h21; req[1] = 8'h23;
+    out_changes = 0;
+    frame(8'h03, 2, 0);
+    expect_status(0, 0);
+    if (wr_out !== 12'h321 || ovr_en !== 2'b10) $fatal(1, "wr_out %h ovr_en %b", wr_out, ovr_en);
+    if (out_changes !== 1) $fatal(1, "WRITE changed the outputs in %0d clocks", out_changes);
+    frame(8'h02, 0, 0);
+    expect_read(20'h12345, 12'h321, 2'b10);
+
+    // WRITE of the wrong length, or with a bad CRC, changes nothing.
+    req[0] = 8'hFF; req[1] = 8'hFF; req[2] = 8'hFF;
     frame(8'h03, 3, 0);
     expect_status(3, 0);
-
-    // WRITE two bytes, then one at an offset.
-    req[0] = 0; req[1] = 0; req[2] = 8'h21; req[3] = 8'h43;
-    frame(8'h04, 4, 0);
-    expect_status(0, 0);
-    if (wr_out !== 12'h321) $fatal(1, "wr_out %h", wr_out);
-    req[0] = 1; req[1] = 0; req[2] = 8'h0F;
-    frame(8'h04, 3, 0);
-    if (wr_out !== 12'hF21) $fatal(1, "wr_out %h", wr_out);
-
-    // READ_WRITES gives back what was written.
-    req[0] = 0; req[1] = 0; req[2] = 2;
-    frame(8'h06, 3, 0);
-    expect_status(0, 2);
-    if ({rep[1], rep[0]} !== 16'h0F21) $fatal(1, "read back writes %h%h", rep[1], rep[0]);
-    req[0] = 1; req[1] = 0; req[2] = 2;
-    frame(8'h06, 3, 0);
+    frame(8'h03, 1, 0);
     expect_status(3, 0);
+    frame(8'h03, 2, 1);
+    expect_status(1, 0);
+    if (wr_out !== 12'h321 || ovr_en !== 2'b10) $fatal(1, "refused WRITE took effect");
 
-    // OVERRIDE on and off, each read back with READ_ENABLES.
-    req[0] = 0; req[1] = 0; req[2] = 8'h02;
-    frame(8'h05, 3, 0);
-    expect_status(0, 0);
-    if (ovr_en !== 2'b10) $fatal(1, "ovr_en %b", ovr_en);
-    req[0] = 0; req[1] = 0; req[2] = 1;
-    frame(8'h07, 3, 0);
-    expect_status(0, 1);
-    if (rep[0] !== 8'h02) $fatal(1, "read back enables %h", rep[0]);
-    req[2] = 8'h00;
-    frame(8'h05, 3, 0);
-    if (ovr_en !== 2'b00) $fatal(1, "ovr_en %b", ovr_en);
+    // Release everything.
+    req[0] = 0; req[1] = 0;
+    frame(8'h03, 2, 0);
+    if (wr_out !== 12'h000 || ovr_en !== 2'b00) $fatal(1, "release");
 
-    // PULSE: high for exactly one clock, only the masked bit, and the
-    // override enables are untouched.
-    req[0] = 0; req[1] = 0; req[2] = 8'h01;
+    // PULSE: high for exactly one clock, only the masked bits, and the
+    // enables are untouched.
+    req[0] = 8'h01;
     pulse_clocks = 0;
-    frame(8'h08, 3, 0);
+    frame(8'h04, 1, 0);
     expect_status(0, 0);
     if (pulse_clocks !== 1 || pulse_seen !== 2'b01) $fatal(1, "pulse %0d clocks, %b", pulse_clocks, pulse_seen);
     if (ovr_en !== 2'b00) $fatal(1, "pulse changed ovr_en %b", ovr_en);
-    req[2] = 8'h03;
+    req[0] = 8'h03;
     pulse_clocks = 0;
-    frame(8'h08, 3, 0);
+    frame(8'h04, 1, 0);
     if (pulse_clocks !== 1 || pulse_seen !== 2'b11) $fatal(1, "pulse both %0d clocks, %b", pulse_clocks, pulse_seen);
-    req[0] = 1; req[1] = 0; req[2] = 8'h01;
-    frame(8'h08, 3, 0);
+    pulse_clocks = 0;
+    frame(8'h04, 2, 0);
     expect_status(3, 0);
+    if (pulse_clocks !== 0) $fatal(1, "a refused PULSE pulsed");
 
     // Bad CRC, unknown command, bad length.
     frame(8'h01, 0, 1);
     expect_status(1, 0);
-    frame(8'h7E, 0, 0);
+    send_frame(8'h7E, 0, 0);
+    get_reply(8'h00);
     expect_status(2, 0);
     frame(8'h01, 1, 0);
+    expect_status(3, 0);
+    frame(8'h02, 1, 0);
     expect_status(3, 0);
 
     // A frame cut short is dropped, and the next one works.
     send_byte(8'hA5);
     send_byte(8'h01);
-    repeat (CPB * 300) @(posedge clk);
+    repeat (CPB * 600) @(posedge clk);
     frame(8'h01, 0, 0);
-    expect_status(0, 9);
+    expect_status(0, 5);
 
-    // INFO, SNAPSHOT and READ sent back to back, without waiting: the
+    // INFO, WRITE and READ sent back to back, without waiting: the
     // receive buffer holds what arrives while a reply goes out.
     rd_in = 20'h5A5A5;
-    req[0] = 0; req[1] = 0; req[2] = 3;
+    req[0] = 8'hBC; req[1] = 8'h1A;
     fork
       begin
         send_frame(8'h01, 0, 0);
+        send_frame(8'h03, 2, 0);
         send_frame(8'h02, 0, 0);
-        send_frame(8'h03, 3, 0);
       end
       begin
         get_reply(8'h01);
-        expect_status(0, 9);
-        get_reply(8'h02);
-        expect_status(0, 0);
+        expect_status(0, 5);
         get_reply(8'h03);
-        expect_status(0, 3);
-        if ({rep[2], rep[1], rep[0]} !== 24'h05A5A5) $fatal(1, "batched read %h%h%h", rep[2], rep[1], rep[0]);
+        expect_status(0, 0);
+        get_reply(8'h02);
+        expect_read(20'h5A5A5, 12'hABC, 2'b01);
       end
     join
 
