@@ -1,0 +1,48 @@
+#:schema https://raw.githubusercontent.com/zapta/soft-agent/main/schemas/logix-debug-v1.json
+# What the debugger sees in main.v, and how it reaches the computer.
+# See docs/debugger.md, The debug configuration file.
+
+# The debugger and its UART run on the board's 25 MHz clock.
+clock = "sys_clk"
+
+# The board's UART, by its name in the board catalog: the on-board iCELink's
+# USB serial port, over the same USB-C cable that programs the board.
+# 115200 baud for now: this link's top speed hasn't been measured yet.
+uplink = { kind = "uart", resource = "uart", baud = 115200 }
+
+# Net paths start with the top module, main. A net has any width; a list
+# combines one-bit nets and pins into one bus.
+
+# drive: nets you set from the panel.
+
+# Take over the pattern: type one, such as 11111111 to keep the LED lit, then
+# Release to give it back to the running light.
+[[drive]]
+name = "pattern_in"
+net = "main.pattern"
+format = "bin"
+
+# Hold the light: 0 stops each move to the next place, and Pulse lets one
+# through. The design holds it at 1 (see main.v); Release gives it back.
+[[drive]]
+name = "enable_step"
+net = "main.enable_step"
+
+# watch: nets you read, live, in the panel.
+
+[[watch]]
+name = "pattern"
+net = "main.pattern"
+format = "bin"
+
+# The step timer, counting to 6,250,000 four times a second.
+[[watch]]
+name = "timer"
+net = "main.u_ticker.count"
+format = "dec"
+
+# The enable, as the design sees it: 1 unless driven to 0. Names are unique
+# across drive and watch, so this differs from the drive entry's.
+[[watch]]
+name = "step_enabled"
+net = "main.enable_step"
