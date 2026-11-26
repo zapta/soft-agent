@@ -141,6 +141,8 @@ The panel has three sections: **Drive**, the signals you can set; **Watch**,
 the signals the panel reads, refreshed live; and **Plot**, the watched
 signals drawn over time.
 
+![The debug panel for this example: Drive with leds and enable_step, Watch with pattern, timer and step_enabled, and the Plot of the last 30 seconds](images/panel.png)
+
 Try these:
 
 - **Watch the light.** In Watch, `pattern` is the lit LED, in binary (LED7
