@@ -72,6 +72,11 @@
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
   .pill.on { color: var(--on); border-color: var(--on); }
   .pill.off { color: var(--off); }
+  /* A pulse the board took: the state pill flashes, then fades back. */
+  .pill.flash { animation: flash 700ms ease-out; }
+  @keyframes flash {
+    0%, 25% { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  }
   button, input[type=text] {
     font: inherit; border-radius: 6px; border: 1px solid var(--line);
     background: var(--panel); color: var(--text); padding: 4px 10px;
@@ -399,7 +404,7 @@
         const p = document.createElement("button");
         p.textContent = "Pulse";
         p.title = `Flip ${o.name} for one clock, driven or released`;
-        p.onclick = () => write({ name: o.name, pulse: true });
+        p.onclick = async () => { if (await write({ name: o.name, pulse: true })) flash(tr); };
         box.append(p);
       } else {
         inp = document.createElement("input");
@@ -455,12 +460,25 @@
       pill = document.createElement("span");
       td.append(pill);
     }
-    pill.className = "pill " + (driven ? "on" : "off");
+    // classList, not className, so a running flash isn't cut short.
+    pill.classList.add("pill");
+    pill.classList.toggle("on", driven);
+    pill.classList.toggle("off", !driven);
     if (pill.textContent !== text) pill.textContent = text;
     if (tr.dataset.verified) delete pill.dataset.tip;
     else pill.dataset.tip = "Not read from the board (it didn't answer): what was last written.";
     const rel = tr.querySelector(".release");
     if (rel) rel.disabled = !driven;
+  }
+
+  // Flashes a drive row's state pill, from the start on every call.
+  function flash(tr) {
+    const pill = tr.querySelector(".state .pill");
+    if (!pill) return;
+    pill.classList.remove("flash");
+    void pill.offsetWidth;  // restarts the animation
+    pill.classList.add("flash");
+    pill.addEventListener("animationend", () => pill.classList.remove("flash"), { once: true });
   }
 
   function setText(td, text) {
@@ -507,7 +525,9 @@
     }
   }
 
+  // Writes, then refreshes; true when the board took it.
   async function write(body) {
+    let ok = false;
     try {
       await api("/api/write", {
         method: "POST",
@@ -515,10 +535,12 @@
         body: JSON.stringify({ session, ...body }),
       });
       showError(null);
+      ok = true;
     } catch (e) {
       showError(e);
     }
     refresh(!paused);
+    return ok;
   }
 
   // The panel's status: "Live" while reads keep coming, "Paused", or

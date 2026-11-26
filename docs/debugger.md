@@ -425,7 +425,7 @@ debug map. All are soft-agent extension tools in the engine's style
 | `debug_read` | Reads named nets, in one snapshot | Values as numbers and as bit strings, with widths |
 | `debug_write` | Writes a named net, releases an override back to the design, or pulses a one-bit net | Refuses names that aren't in drive, and pulses on nets wider than one bit |
 | `debug_close` | Ends the session | |
-| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused, then Plot, a live strip chart of the watched values; each watched row shows its value in a format chosen per row (hex, decimal or binary); each driven net has value and release controls (0, 1 and Pulse buttons for one bit) |
+| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused, then Plot, a live strip chart of the watched values; each watched row shows its value in a format chosen per row (hex, decimal or binary); each driven net has value and release controls (0, 1 and Pulse buttons for one bit; a pulse the board took flashes the row's state) |
 
 - **The port is shared.** The debugger owns the UART while a session is open,
   so the engine's `open_serial` on the same port is refused in version 1. A
