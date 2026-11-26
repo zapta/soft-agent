@@ -476,6 +476,36 @@ move unchanged; only where the code lives changes. To keep that easy:
   around its absence (Build integration). Proposing that hook is an engine
   change, so it needs the user's go-ahead first.
 
+### To do before porting
+
+Open as of 2026-11-25, to be gone over one at a time:
+
+- [ ] **Families beyond iCE40.** `debug_build` refuses other families
+  (`build.rs`). Its iCE40-only parts are the pre-pass, which reads
+  `+/ice40/cells_sim.v`, and the size estimate, which runs `synth_ice40`.
+  The debugger's Verilog is meant to be generic, but it has been built only
+  for iCE40. Decide, for each family the engine supports, whether it is
+  supported or refused with a clear error, and test the supported ones on a
+  board.
+- [ ] **Board data in the catalog.** The UART and the clock already come
+  from the board's catalog resources (`uart`, `clock`). Check which Logix
+  Catalog boards have a `uart` resource the debugger can use, and say in the
+  catalog's contributor docs what a board needs for it.
+- [ ] **Cost.** On the Alhambra II example, the design went from 43 to 946
+  logic cells and from 188.4 to 69.5 MHz. That fits an HX8K but not small
+  parts. Make it smaller (see the next steps under First milestone), keep
+  it off the design's timing path, and report the measured difference
+  between the builds, not the estimate (544 LUTs and 320 flip-flops, against
+  903 cells measured).
+- [ ] **Where the panel goes.** The engine is a backend for other tools.
+  Decide whether the browser panel moves with it, goes to Logix IDE, or
+  stays here as a reference, with only the session tools in the engine.
+- [ ] **Windows and Linux.** Sessions have run only on macOS. Test them
+  with the engine's serial port and driver handling on Windows and Linux.
+- [ ] **Freeze the formats.** Once in the engine, `debug.toml`, the debug
+  map, the protocol (version 3) and the tool names are public. Review them
+  once more before porting.
+
 ## Decisions
 
 | # | Question | Decided |
