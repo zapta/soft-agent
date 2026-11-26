@@ -42,8 +42,8 @@ module logix_debugger #(
 
   // --- UART ---------------------------------------------------------------
 
-  wire [7:0] rx_data;
-  wire       rx_valid;
+  wire [7:0] uart_data;
+  wire       uart_valid;
   reg  [7:0] tx_data = 8'h00;
   reg        tx_start = 1'b0;
   wire       tx_busy;
@@ -51,8 +51,8 @@ module logix_debugger #(
   logix_debugger_uart_rx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_rx (
       .clk  (clk),
       .rx   (rx),
-      .data (rx_data),
-      .valid(rx_valid)
+      .data (uart_data),
+      .valid(uart_valid)
   );
 
   logix_debugger_uart_tx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_tx (
@@ -90,6 +90,33 @@ module logix_debugger #(
                    S_CRC = 3'd4, S_EXEC = 3'd5, S_WRITE = 3'd6, S_REPLY = 3'd7;
 
   reg [2:0] state = S_SYNC;
+
+  // --- Receive buffer -----------------------------------------------------
+  // The command engine takes input only while it waits for a frame, so bytes
+  // that arrive while it executes or replies wait here. The host can then
+  // send several frames at once and pay the link's round trip once.
+
+  localparam integer FIFO_DEPTH = 64;
+  reg [7:0] fifo[0:FIFO_DEPTH-1];
+  reg [5:0] wp = 6'd0;
+  reg [5:0] rp = 6'd0;
+  reg [7:0] rx_data = 8'h00;  // the engine's next byte
+  reg rx_valid = 1'b0;  // high for one clock per byte
+  wire fifo_empty = (wp == rp);
+  wire fifo_full = (wp + 1'b1 == rp);
+
+  always @(posedge clk) begin
+    if (uart_valid && !fifo_full) begin
+      fifo[wp] <= uart_data;
+      wp <= wp + 1'b1;
+    end
+    rx_valid <= 1'b0;
+    if (state <= S_CRC && !fifo_empty && !rx_valid) begin
+      rx_data  <= fifo[rp];
+      rp       <= rp + 1'b1;
+      rx_valid <= 1'b1;
+    end
+  end
   reg [7:0] cmd = 8'h00;
   reg [7:0] len = 8'h00;
   reg [7:0] pidx = 8'h00;

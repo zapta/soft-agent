@@ -201,6 +201,9 @@ pub async fn run(
     let design_v = read(&gen_dir.join("design_debug.v"), "the pre-pass output")?;
     let mut hasher = Sha256::new();
     hasher.update(design_v.as_bytes());
+    // The debugger's own Verilog too: a board with an older debugger must
+    // not pass as this build.
+    hasher.update(DEBUGGER_V.as_bytes());
     hasher.update(serde_json::to_string(&map).unwrap_or_default().as_bytes());
     let digest = hasher.finalize();
     let id = u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]);

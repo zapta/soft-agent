@@ -308,6 +308,10 @@ nets.
   version (R8).
 - **Command engine + UART:** parses frames and answers them. At 12 MHz and
   115200 baud the divisor is 104 (0.16% off), well within UART tolerance.
+  A 64-byte receive buffer sits between the UART and the engine: the engine
+  takes input only while it waits for a frame, so bytes that arrive while
+  it executes or replies wait there. The host can therefore send several
+  frames at once.
 - **Clock domains:** version 1 has one clock, shared by the UART and the
   debugger, and every watched and driven net must be on it. Nets from other
   domains come later, with synchronizers: two flip-flops for single bits, a
@@ -384,8 +388,8 @@ the override mux between them.
 - **Constraints:** the debug build writes its own copy of the user's
   constraint file with the debugger's TX and RX pins added. The user's file
   stays untouched.
-- **Build ID:** a hash of the debug map and the source files, in the
-  debugger's ROM and in `debug_map.json`.
+- **Build ID:** a hash of the generated design, the debug map and the
+  debugger's Verilog, in the debugger's ROM and in `debug_map.json`.
 - **Capture phase:** the same pre-pass exposes capture signals; the debugger
   adds a RAM block, so `debug_top.v` grows but the flow stays as drawn.
 
@@ -550,6 +554,25 @@ of a variable shift, and register the reply byte.
   itself after the board was unplugged and plugged back in.
   `debug_read` reads watched nets only; to read a driven net, list it in `watch`
   as well.
+- **Batches:** the host sends each operation's frames in one write, up to
+  48 bytes (the receive buffer holds 64), and then reads the replies in
+  order, so an operation pays the USB serial chip's round trip once: a
+  `debug_read` is INFO, SNAPSHOT and READ together; a `debug_write` is an
+  INFO first (nothing is written to another build), then the WRITE,
+  OVERRIDE and read-backs together; a panel refresh is two batches. A
+  refused frame doesn't end a batch early: its other replies are still read,
+  so none is left on the line. Measured 2026-11-25:
+
+  | Board (USB serial chip) | `debug_read` | `debug_write` | Panel refresh |
+  | --- | --- | --- | --- |
+  | Alhambra II (FTDI, 16 ms latency timer) | 16 ms, 62/s (48 ms before batches) | 32 ms (64 ms) | 34 ms (about 100 ms) |
+  | iCESugar v1.5 (its DAPLink's USB serial) | 4 ms, 249/s | 6 ms | 9 ms |
+
+  The FTDI chip holds received bytes up to its latency timer, 16 ms by
+  default; lowering it would speed the Alhambra up further, but macOS gives
+  no simple way to.
+- **Build ID:** a hash of the generated design, the debug map and the
+  debugger's own Verilog, so a board with an older debugger is refused.
 - **Limits:** a READ returns up to 128 bytes and a WRITE carries 6; the host
   splits larger spaces. A frame that stops arriving is dropped after about
   25 byte times. The port isn't locked against the engine's serial tools, so

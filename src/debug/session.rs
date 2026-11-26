@@ -54,10 +54,20 @@ fn with_session<T>(
     f(s)
 }
 
-/// Sends a frame and returns the reply's payload, checking its status.
+/// A frame to send: its command and payload.
+type Frame = (u8, Vec<u8>);
+
+/// The most bytes sent in one write. The debugger's receive buffer holds 64
+/// while it replies to earlier frames.
+const MAX_BATCH: usize = 48;
+
+/// Sends frames and returns each reply's payload, in order, checking their
+/// status. The frames go out together, up to MAX_BATCH bytes a write, so a
+/// batch pays the link's round trip once: USB serial chips hold received
+/// bytes for a while (an FTDI chip, such as the Alhambra II's, for 16 ms).
 /// Opens the port again first when the link broke; a link error drops the
 /// port, so the next call tries again (the board unplugged and back).
-fn transact(s: &mut Session, command: u8, payload: &[u8]) -> Result<Vec<u8>, ToolError> {
+fn transact_many(s: &mut Session, frames: &[Frame]) -> Result<Vec<Vec<u8>>, ToolError> {
     if s.port.is_none() {
         let port = serialport::new(&s.port_name, s.map.baud)
             .timeout(Duration::from_millis(20))
@@ -75,7 +85,7 @@ fn transact(s: &mut Session, command: u8, payload: &[u8]) -> Result<Vec<u8>, Too
         s.reconnected = true;
         log::info!("Debug session reopened {}", s.port_name);
     }
-    let result = exchange(s, command, payload);
+    let result = exchange(s, frames);
     if let Err(e) = &result
         && e.category == Category::Setup
     {
@@ -84,8 +94,15 @@ fn transact(s: &mut Session, command: u8, payload: &[u8]) -> Result<Vec<u8>, Too
     result
 }
 
-/// One frame and its reply, on the open port.
-fn exchange(s: &mut Session, command: u8, payload: &[u8]) -> Result<Vec<u8>, ToolError> {
+/// One frame and its reply's payload.
+fn transact(s: &mut Session, command: u8, payload: &[u8]) -> Result<Vec<u8>, ToolError> {
+    Ok(transact_many(s, &[(command, payload.to_vec())])?.remove(0))
+}
+
+/// Frames and their replies, on the open port. A refused frame doesn't stop
+/// the rest of its batch from being read, so no late reply is left on the
+/// line for the next request.
+fn exchange(s: &mut Session, frames: &[Frame]) -> Result<Vec<Vec<u8>>, ToolError> {
     let name = s.port_name.clone();
     let Some(port) = s.port.as_mut() else {
         return Err(ToolError::engine("The debug session has no open port."));
@@ -101,103 +118,153 @@ fn exchange(s: &mut Session, command: u8, payload: &[u8]) -> Result<Vec<u8>, Too
         )
     };
     let _ = port.clear(serialport::ClearBuffer::Input);
-    port.write_all(&protocol::frame(command, payload))
-        .and_then(|_| port.flush())
-        .map_err(|e| link(e.to_string()))?;
-    let deadline = Instant::now() + REPLY_TIMEOUT;
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 256];
-    loop {
-        match protocol::parse_reply(&buf).map_err(link)? {
-            Some((reply, _)) => {
-                if reply.command != command {
-                    return Err(link(format!(
-                        "it answered command {:02x} to command {command:02x}",
-                        reply.command
-                    )));
-                }
-                if reply.status != 0 {
-                    return Err(ToolError::engine(format!(
-                        "The debugger refused command {command:02x}: {}.",
-                        protocol::status_text(reply.status)
-                    )));
-                }
-                return Ok(reply.payload);
+    let mut payloads = Vec::with_capacity(frames.len());
+    let mut refused: Option<ToolError> = None;
+    let mut next = 0;
+    while next < frames.len() {
+        // As many frames as fit in one write.
+        let mut bytes = Vec::new();
+        let mut commands = Vec::new();
+        while next < frames.len() {
+            let f = protocol::frame(frames[next].0, &frames[next].1);
+            if !commands.is_empty() && bytes.len() + f.len() > MAX_BATCH {
+                break;
             }
-            None if Instant::now() >= deadline => {
-                return Err(link(format!(
-                    "no reply in {} ms",
-                    REPLY_TIMEOUT.as_millis()
-                )));
+            bytes.extend(f);
+            commands.push(frames[next].0);
+            next += 1;
+        }
+        port.write_all(&bytes)
+            .and_then(|_| port.flush())
+            .map_err(|e| link(e.to_string()))?;
+        let deadline = Instant::now() + REPLY_TIMEOUT;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 256];
+        for command in commands {
+            loop {
+                match protocol::parse_reply(&buf).map_err(link)? {
+                    Some((reply, used)) => {
+                        buf.drain(..used);
+                        if reply.command != command {
+                            return Err(link(format!(
+                                "it answered command {:02x} to command {command:02x}",
+                                reply.command
+                            )));
+                        }
+                        if reply.status != 0 && refused.is_none() {
+                            refused = Some(ToolError::engine(format!(
+                                "The debugger refused command {command:02x}: {}.",
+                                protocol::status_text(reply.status)
+                            )));
+                        }
+                        payloads.push(reply.payload);
+                        break;
+                    }
+                    None if Instant::now() >= deadline => {
+                        return Err(link(format!(
+                            "no reply in {} ms",
+                            REPLY_TIMEOUT.as_millis()
+                        )));
+                    }
+                    None => match port.read(&mut chunk) {
+                        Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                        Err(e)
+                            if e.kind() == ErrorKind::TimedOut
+                                || e.kind() == ErrorKind::Interrupted => {}
+                        Err(e) => return Err(link(e.to_string())),
+                    },
+                }
             }
-            None => {}
         }
-        match port.read(&mut chunk) {
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
-            Err(e) if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::Interrupted => {}
-            Err(e) => return Err(link(e.to_string())),
-        }
+    }
+    match refused {
+        Some(e) => Err(e),
+        None => Ok(payloads),
     }
 }
 
-/// Writes `bytes` of the write registers (WRITE) or the enables (OVERRIDE)
-/// from byte `first` on, a few bytes a frame.
-fn write_space(s: &mut Session, command: u8, first: usize, count: usize) -> Result<(), ToolError> {
+/// The frames that write bytes `first..first + count` of the write
+/// registers (WRITE) or the enables (OVERRIDE), a few bytes a frame.
+fn write_frames(s: &Session, command: u8, first: usize, count: usize) -> Vec<Frame> {
+    let space = if command == protocol::WRITE {
+        &s.wr
+    } else {
+        &s.en
+    };
+    let mut frames = Vec::new();
     let mut at = first;
     while at < first + count {
         let n = (first + count - at).min(protocol::MAX_WRITE);
-        let space = if command == protocol::WRITE {
-            &s.wr
-        } else {
-            &s.en
-        };
         let mut payload = (at as u16).to_le_bytes().to_vec();
         payload.extend_from_slice(&space[at..at + n]);
-        transact(s, command, &payload)?;
+        frames.push((command, payload));
         at += n;
     }
-    Ok(())
+    frames
 }
 
-/// Reads `total` bytes of a space (READ, READ_WRITES or READ_ENABLES), a
-/// reply's worth at a time.
-fn read_space(s: &mut Session, command: u8, total: usize) -> Result<Vec<u8>, ToolError> {
-    let mut bytes = Vec::with_capacity(total);
-    while bytes.len() < total {
-        let n = (total - bytes.len()).min(protocol::MAX_READ);
-        let mut payload = (bytes.len() as u16).to_le_bytes().to_vec();
+/// The frames that read `total` bytes of a space (READ, READ_WRITES or
+/// READ_ENABLES), a reply's worth each.
+fn read_frames(command: u8, total: usize) -> Vec<Frame> {
+    let mut frames = Vec::new();
+    let mut at = 0;
+    while at < total {
+        let n = (total - at).min(protocol::MAX_READ);
+        let mut payload = (at as u16).to_le_bytes().to_vec();
         payload.push(n as u8);
-        let got = transact(s, command, &payload)?;
-        if got.len() != n {
-            return Err(ToolError::engine(format!(
-                "The debugger's reply to command {command:02x} has the wrong length."
-            )));
-        }
-        bytes.extend(got);
+        frames.push((command, payload));
+        at += n;
+    }
+    frames
+}
+
+/// The bytes the replies to read_frames(_, total) carry, joined.
+fn joined(replies: &[Vec<u8>], total: usize) -> Result<Vec<u8>, ToolError> {
+    let bytes: Vec<u8> = replies.concat();
+    if bytes.len() != total {
+        return Err(ToolError::engine("A debugger reply has the wrong length."));
     }
     Ok(bytes)
 }
 
-/// Reads the write registers and the override enables back from the
-/// debugger into the session's copy, so what it reports is the board's.
-fn read_back(s: &mut Session) -> Result<(), ToolError> {
-    s.wr = read_space(s, protocol::READ_WRITES, s.map.write_bytes)?;
-    s.en = read_space(s, protocol::READ_ENABLES, s.map.enable_bytes)?;
+/// The frames that read the write registers and the enables back.
+fn read_back_frames(s: &Session) -> Vec<Frame> {
+    let mut frames = read_frames(protocol::READ_WRITES, s.map.write_bytes);
+    frames.extend(read_frames(protocol::READ_ENABLES, s.map.enable_bytes));
+    frames
+}
+
+/// Takes the replies to read_back_frames into the session's copy, so what it
+/// reports is the board's.
+fn take_read_back(s: &mut Session, replies: &[Vec<u8>]) -> Result<(), ToolError> {
+    let n = read_frames(protocol::READ_WRITES, s.map.write_bytes).len();
+    if replies.len() < n {
+        return Err(ToolError::engine("Missing debugger replies."));
+    }
+    s.wr = joined(&replies[..n], s.map.write_bytes)?;
+    s.en = joined(&replies[n..], s.map.enable_bytes)?;
     Ok(())
 }
 
-/// Releases every override and clears the write registers.
+/// Releases every override and clears the write registers, in one batch.
 fn reset(s: &mut Session) -> Result<(), ToolError> {
     s.en = vec![0; s.map.enable_bytes];
     s.wr = vec![0; s.map.write_bytes];
-    write_space(s, protocol::OVERRIDE, 0, s.map.enable_bytes)?;
-    write_space(s, protocol::WRITE, 0, s.map.write_bytes)
+    let mut frames = write_frames(s, protocol::OVERRIDE, 0, s.map.enable_bytes);
+    frames.extend(write_frames(s, protocol::WRITE, 0, s.map.write_bytes));
+    transact_many(s, &frames).map(|_| ())
 }
 
 /// Asks the debugger for its build: Ok(Ok(id)) when it is the session's
 /// map's build, Ok(Err(id)) when it is another.
 fn board_build(s: &mut Session) -> Result<Result<String, String>, ToolError> {
     let info = transact(s, protocol::INFO, &[])?;
+    info_build(s, &info)
+}
+
+/// An INFO reply's build: Ok(id) when it is the session's map's, Err(id)
+/// when it is another.
+fn info_build(s: &Session, info: &[u8]) -> Result<Result<String, String>, ToolError> {
     if info.len() != 9 {
         return Err(ToolError::engine(
             "The debugger's INFO reply has the wrong length.",
@@ -219,7 +286,15 @@ fn board_build(s: &mut Session) -> Result<Result<String, String>, ToolError> {
 /// Before each read and write: the board may have been programmed with
 /// another build since debug_open, and the map would then be wrong.
 fn same_build(s: &mut Session) -> Result<(), ToolError> {
-    match board_build(s)? {
+    let build = board_build(s)?;
+    build_ok(s, build)
+}
+
+/// The board's build checked against the session's map, from an INFO
+/// reply: an error when it is another build. After a reconnect, a matching
+/// board is reset to match the session's copy.
+fn build_ok(s: &mut Session, build: Result<String, String>) -> Result<(), ToolError> {
+    match build {
         Ok(_) => {
             if s.reconnected {
                 s.reconnected = false;
@@ -461,9 +536,13 @@ pub fn read(input: DebugReadInput) -> Result<DebugReadOutput, ToolError> {
                 })
                 .collect::<Result<_, _>>()?,
         };
-        same_build(s)?;
-        transact(s, protocol::SNAPSHOT, &[])?;
-        let bytes = read_space(s, protocol::READ, s.map.read_bytes)?;
+        // The build check, the snapshot and the reads, in one batch.
+        let mut frames: Vec<Frame> = vec![(protocol::INFO, vec![]), (protocol::SNAPSHOT, vec![])];
+        frames.extend(read_frames(protocol::READ, s.map.read_bytes));
+        let replies = transact_many(s, &frames)?;
+        let build = info_build(s, &replies[0])?;
+        build_ok(s, build)?;
+        let bytes = joined(&replies[2..], s.map.read_bytes)?;
         Ok(DebugReadOutput {
             values: wanted
                 .into_iter()
@@ -580,10 +659,16 @@ pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
                 )));
             };
             protocol::set_bits(&mut s.en, bit, &[false]);
-            write_space(s, protocol::OVERRIDE, bit / 8, 1)?;
+            // The release and the read-back, in one batch.
+            let mut frames = write_frames(s, protocol::OVERRIDE, bit / 8, 1);
+            let n = frames.len();
+            frames.extend(read_back_frames(s));
+            let replies = transact_many(s, &frames)?;
+            take_read_back(s, &replies[n..])?;
+            let driven = protocol::get_bits(&s.en, bit, 1)[0];
             return Ok(DebugWriteOutput {
                 name: o.name,
-                driven: false,
+                driven,
                 hex: None,
             });
         }
@@ -596,13 +681,17 @@ pub fn write(input: DebugWriteInput) -> Result<DebugWriteOutput, ToolError> {
         protocol::set_bits(&mut s.wr, o.offset, &bits);
         let first = o.offset / 8;
         let last = (o.offset + o.width - 1) / 8;
-        write_space(s, protocol::WRITE, first, last - first + 1)?;
+        // The value, the take-over and the read-back, in one batch.
+        let mut frames = write_frames(s, protocol::WRITE, first, last - first + 1);
         if let (Some(bit), Some(byte)) = (o.enable_bit, enable_byte) {
             protocol::set_bits(&mut s.en, bit, &[true]);
-            write_space(s, protocol::OVERRIDE, byte, 1)?;
+            frames.extend(write_frames(s, protocol::OVERRIDE, byte, 1));
         }
-        // What the debugger now holds, read back.
-        read_back(s)?;
+        let n = frames.len();
+        frames.extend(read_back_frames(s));
+        let replies = transact_many(s, &frames)?;
+        // What the debugger now holds.
+        take_read_back(s, &replies[n..])?;
         let held = protocol::get_bits(&s.wr, o.offset, o.width);
         let driven = o
             .enable_bit
@@ -782,7 +871,16 @@ pub struct OutputState {
 
 pub fn info(id: &str) -> Result<SessionInfo, ToolError> {
     with_session(id, |s| {
-        let verified = same_build(s).and_then(|_| read_back(s)).is_ok();
+        // The build check and the read-back, in one batch.
+        let verified = (|| {
+            let mut frames: Vec<Frame> = vec![(protocol::INFO, vec![])];
+            frames.extend(read_back_frames(s));
+            let replies = transact_many(s, &frames)?;
+            let build = info_build(s, &replies[0])?;
+            build_ok(s, build)?;
+            take_read_back(s, &replies[1..])
+        })()
+        .is_ok();
         Ok(SessionInfo {
             verified,
             session: id.to_string(),

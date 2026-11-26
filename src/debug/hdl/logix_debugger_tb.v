@@ -81,9 +81,10 @@ module logix_debugger_tb;
 
   // Sends a frame of n payload bytes from req, with a CRC (bad if
   // corrupt), and reads the reply into rep.
-  task frame(input [7:0] command, input integer n, input corrupt);
+  // Sends a frame of n payload bytes from req, with a CRC (bad if corrupt).
+  task send_frame(input [7:0] command, input integer n, input corrupt);
     integer i;
-    reg [7:0] c, b;
+    reg [7:0] c;
     begin
       send_byte(8'hA5);
       c = crc8(8'h00, command);
@@ -95,6 +96,14 @@ module logix_debugger_tb;
         send_byte(req[i]);
       end
       send_byte(corrupt ? ~c : c);
+    end
+  endtask
+
+  // Reads a reply into rep, checking its sync, command and CRC.
+  task get_reply(input [7:0] command);
+    integer i;
+    reg [7:0] c, b;
+    begin
       recv_byte(b);
       if (b !== 8'h5A) $fatal(1, "reply sync %h", b);
       recv_byte(b);
@@ -112,6 +121,14 @@ module logix_debugger_tb;
       end
       recv_byte(b);
       if (b !== c) $fatal(1, "reply CRC %h, expected %h", b, c);
+    end
+  endtask
+
+  // A frame, then its reply.
+  task frame(input [7:0] command, input integer n, input corrupt);
+    begin
+      send_frame(command, n, corrupt);
+      get_reply(command);
     end
   endtask
 
@@ -195,6 +212,27 @@ module logix_debugger_tb;
     repeat (CPB * 300) @(posedge clk);
     frame(8'h01, 0, 0);
     expect_status(0, 9);
+
+    // INFO, SNAPSHOT and READ sent back to back, without waiting: the
+    // receive buffer holds what arrives while a reply goes out.
+    rd_in = 20'h5A5A5;
+    req[0] = 0; req[1] = 0; req[2] = 3;
+    fork
+      begin
+        send_frame(8'h01, 0, 0);
+        send_frame(8'h02, 0, 0);
+        send_frame(8'h03, 3, 0);
+      end
+      begin
+        get_reply(8'h01);
+        expect_status(0, 9);
+        get_reply(8'h02);
+        expect_status(0, 0);
+        get_reply(8'h03);
+        expect_status(0, 3);
+        if ({rep[2], rep[1], rep[0]} !== 24'h05A5A5) $fatal(1, "batched read %h%h%h", rep[2], rep[1], rep[0]);
+      end
+    join
 
     $display("OK: logix_debugger passes");
     $finish;
