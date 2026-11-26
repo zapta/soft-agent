@@ -406,7 +406,7 @@ debug map. All are soft-agent extension tools in the engine's style
 | `debug_read` | Reads named nets, in one snapshot | Values as numbers and as bit strings, with widths |
 | `debug_write` | Writes a named net, or releases an override back to the design | Refuses names that aren't in drive |
 | `debug_close` | Ends the session | |
-| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused; each watched row shows its value in a format chosen per row (hex, decimal or binary); each driven net has value and release controls (0 and 1 buttons for one bit) |
+| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused, then Plot, a live strip chart of the watched values; each watched row shows its value in a format chosen per row (hex, decimal or binary); each driven net has value and release controls (0 and 1 buttons for one bit) |
 
 - **The port is shared.** The debugger owns the UART while a session is open,
   so the engine's `open_serial` on the same port is refused in version 1. A
@@ -589,6 +589,13 @@ of a variable shift, and register the reply byte.
   25 byte times. The port isn't locked against the engine's serial tools, so
   don't open both on one port.
 - **Progress:** `debug_build` reports no progress while it runs yet.
+- **The plot:** the panel's Plot section draws every read's watched values
+  over the last 10 seconds to 5 minutes: one bit as a high/low trace, more
+  as a stepped line scaled to the values in view, with a hover cursor for a
+  moment's time and values. It samples at the refresh rate (up to 50 a
+  second), so it is a strip chart, not a logic analyzer: changes faster
+  than the refresh don't show, and fast counters look like sawtooths. The
+  capture phase is for those.
 - **The panel:** `src/debug/panel.rs` serves `panel.html` from the
   soft-agent process on 127.0.0.1, on a port the system picks, while
   soft-agent runs. Every request needs the server's random token, which is

@@ -66,7 +66,12 @@ board is connected.
   When released, the light carries on from your pattern, frozen or not:
   driving `pattern` also feeds the register that holds it.
 - Each row's **Format** menu switches between hex, decimal and binary.
-- **Pause** stops the live updates; **Read now** reads once.
+- **Plot**, under Watch, draws the watched values over the last seconds or
+  minutes: set the refresh rate to 20 or 50 per second for smoother lines,
+  and point at the plot to see a moment's values. It only sees what each
+  read sees, so `step`'s one-cycle pulses rarely show.
+- **Pause** stops the live updates and freezes the plot; **Read now** reads
+  once.
 
 ## The files
 
