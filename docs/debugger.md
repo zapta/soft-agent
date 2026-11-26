@@ -72,7 +72,7 @@ constrain them.
 | R3 | A debug build of an unchanged design adds the debugger; a normal build of the same sources has no trace of it. | Must |
 | R4 | The host reads any listed net, and writes any net listed as writable, by name. | Must |
 | R5 | Reads of several nets in one request are taken in the same clock cycle (a coherent snapshot). | Must |
-| R6 | The uplink is the board's UART from the catalog, at a baud rate the board's clock supports. | Must |
+| R6 | The uplink is a UART: the board's from the catalog when it has one, else any two pins with a USB serial adapter, at a baud rate the clock supports. | Must |
 | R7 | The build writes a debug map (names, widths, directions, addresses, clock) into the build folder, and the host tools take names from it, never from the sources. | Must |
 | R8 | The debugger reports an ID of the build it is in, and the host refuses a map that doesn't match the bitstream on the board. | Must |
 | R9 | A name that doesn't exist or was optimized away is a design error at build time. | Must |
@@ -443,6 +443,93 @@ debug map. All are soft-agent extension tools in the engine's style
   result is a VCD file in the build folder, so the engine's `open_waveform`
   shows it with no new viewer.
 
+## Boards
+
+What a board needs for the debugger, and where the Logix Catalog's boards
+stand (audited 2026-11-26, catalog main at that date, 81 boards).
+
+### What a board needs
+
+None of the debugger's board data is required from the catalog. The catalog
+only saves the user from typing it.
+
+- **A clock** of known frequency for the debugger and its UART, the one
+  `clock` of the debug file. The board's catalog clock (`type: "clock"`, with
+  `pin` and `mhz`) gives the frequency when the clock port is on its pin;
+  any other clock pin works with `clock_mhz` in the file.
+  - **An internal oscillator** can work too, if it is accurate enough: the
+    UART samples each bit in its middle, so the two ends together may be
+    about 5% apart over a byte. The build already allows up to 2% for its
+    own divisor rounding, so the oscillator should be within about 2% at
+    the board's temperature and voltage. Check the family's datasheet. The
+    iCE40 UltraPlus and LM `SB_HFOSC` is the likely one, on boards with no
+    clock pin (the pico-ice, the ODT IcyBlue Feather). This isn't supported
+    yet: `clock` must be a top-level input port in the constraint file
+    (`build.rs`), and an oscillator's output is an internal net. It needs a
+    `clock` that names an internal net (the design already runs on the
+    oscillator) with `clock_mhz` required. See the to-do under To do before
+    porting.
+- **A UART link to the host:** a TX and an RX pin, at a 3.3 V (or the
+  bank's) I/O standard.
+  - The board's own USB serial bridge, as a catalog `uart` resource (`tx`,
+    `rx`, `usb_interface` when the bridge's chip has several interfaces,
+    `io_standard` when the family needs one), so `uplink = { kind = "uart",
+    resource = "uart" }` finds it.
+  - Or any two free pins wired to a USB serial adapter (3.3 V), with
+    `uplink = { kind = "uart", tx = "...", rx = "..." }`. Every board can use
+    the debugger this way.
+- **A baud rate the clock can make.** `baud` defaults to 115200. The build
+  accepts any rate the clock divides with at least 8 clocks a bit and at
+  most 2% error. 1,000,000 is the fastest tested (five boards, see Batches)
+  and makes reads up to four times faster, but nothing needs it: a bridge
+  that only does a slower rate works at that rate, only slower. A board's
+  `ai_hints` should say so when its bridge is limited (the Tang Nano 9K's
+  says 9600). Rates below 115200 are untested: at 9600 a full 128-byte
+  read reply takes about 135 ms, within the host's 1 s reply timeout.
+
+### Catalog boards
+
+Whether a board's bridge reaches the FPGA comes from its USB IDs (an FTDI
+FT2232H has a second channel, an FT232H has only one) and its makers'
+documents; the rows marked as such are not checked against schematics or on
+the boards. The catalog has no field for a bridge without a `uart` resource.
+
+- **Catalog `uart`, tested with the debugger** (5): Alhambra II (FT2232H,
+  12 MHz), Arty A7-35T (FT2232H, 100 MHz), iCESugar v1.5 (iCELink, 12 MHz),
+  iCESugar Pro (iCELink, 25 MHz), Tang Nano 20K (BL616, 27 MHz). All at
+  1,000,000 baud, the Alhambra II and both iCESugars at 115200 too.
+- **Catalog `uart`, slow** (1): Tang Nano 9K (BL702): only 9600 baud on
+  macOS. It should work at 9600, not tested.
+- **A USB serial bridge to the FPGA, no catalog `uart` yet** (likely, from
+  makers' documents): iCEBreaker, iCEstick, iCE40-HX8K breakout, Go Board,
+  IceZUM Alhambra, EDU-CIAA-FPGA, Alchitry Cu, Au and Au+, Arty A7-100T,
+  Arty S7-25 and S7-50, Basys 3, Cmod A7-35T, Nexys A7-50T and A7-100T,
+  ULX3S (all four, FT231X), Icepi Zero (FT231X), iCESugar nano (iCELink),
+  Tang Nano 1K and 4K (BL702, maybe as slow as the 9K's), Tang Primer 20K
+  Dock (BL616), ECP5 Versa (FT2232H), pico-ice (its RP2040's USB serial).
+  Adding their `uart` resources is catalog work, done as any catalog change.
+- **Serial only to a processor, not the FPGA fabric** (5): PYNQ-Z1, PYNQ-Z2,
+  Zybo Z7-10 and Z7-20, ZedBoard. Their USB UART goes to the Zynq's
+  processor side; the debugger needs an adapter on a PMOD.
+- **No USB serial bridge** (likely): native-USB boards programmed by DFU
+  (Fomu, OrangeCrab 25F and 85F, iCEBreaker bitsy v0 and v1, ButterStick),
+  single-channel FT232H boards (UPduino 3.0 and 3.1, VSDSquadron FM, FPGA101,
+  ARICE1, ODT IcyBlue Feather), and Colorlight 5A-75B and 5A-75E (no USB).
+  They need an adapter.
+- **Unknown, check the board's schematic** (the rest, 26): ALINX AX7035,
+  Azukar2, BRS-100-GW1NR9, Colorlight i5, i9 and i9+ (depends on the
+  extension board), ECP5 Evaluation Board, ECP5 Mini 12 and 25, EPM11,
+  FleaFPGA Ohm, iCE40UP5K breakout, iCEnode, MicroPhase A7-Lite, Mimas A7,
+  Mimas ECP5 Mini, OK-iCE40Pro, QMTech XC7A100T, Soan Papdi and Soan Papdi
+  Mini, Tang Nano (the first), Tang Primer 20K Lite (the core board alone),
+  ThetaMachines ETH4K, ZXTRES, ZXTRES+ and ZXTRES++.
+
+Clocks: 79 of the 81 boards have a catalog clock, from 12 to 125 MHz, and
+every one of them can make 115200 baud within the build's 2%. The two with
+none, the pico-ice and the ODT IcyBlue Feather, have no clock pin in the
+catalog; they need the internal oscillator support above, or a clock on a
+pin with `clock_mhz`.
+
 ## Prior art
 
 What each existing tool suggests for this design. From memory, not checked
@@ -506,10 +593,16 @@ Open as of 2026-11-25, to be gone over one at a time:
     flash. Right after programming, the first `debug_open` got no reply
     while the FPGA loaded from flash; a second one a little later
     worked.
-- [ ] **Board data in the catalog.** The UART and the clock already come
-  from the board's catalog resources (`uart`, `clock`). Check which Logix
-  Catalog boards have a `uart` resource the debugger can use, and say in the
-  catalog's contributor docs what a board needs for it.
+- [x] **Board data in the catalog** (done 2026-11-26). The catalog's clock
+  and `uart` are optional: any clock pin with `clock_mhz`, and any two pins
+  with a USB serial adapter, work too, at any baud the clock can make, not
+  only 1,000,000. What a board needs and where the 81 catalog boards stand
+  are under Boards: 6 have a `uart`, about 27 more likely have a bridge
+  with no `uart` entry yet, and 79 have a clock.
+- [ ] **Internal oscillators.** Let `clock` name an internal net, such as
+  an iCE40 `SB_HFOSC`'s output, with `clock_mhz` required, for boards with
+  no clock pin whose oscillator is accurate enough (Boards). Today it must
+  be a top-level input port.
 - [ ] **Cost.** On the Alhambra II example, the design went from 43 to 946
   logic cells and from 188.4 to 69.5 MHz. That fits an HX8K but not small
   parts. Make it smaller (see the next steps under First milestone), keep
@@ -524,6 +617,15 @@ Open as of 2026-11-25, to be gone over one at a time:
 - [ ] **Freeze the formats.** Once in the engine, `debug.toml`, the debug
   map, the protocol (version 3) and the tool names are public. Review them
   once more before porting.
+
+### To do after porting
+
+- [ ] **Contributor docs.** In Logix Catalog's contributor docs, say what a
+  board needs for the debugger (Boards, above): a clock, and a `uart`
+  resource for its USB serial bridge, with `usb_interface`, `io_standard`
+  and an `ai_hints` line when the bridge is limited to a slower baud.
+  Update the debugger's requirements, if any, in the docs that explain
+  custom boards too. Waits until the debugger is in the engine.
 
 ## Decisions
 
