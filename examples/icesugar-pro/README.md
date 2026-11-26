@@ -8,10 +8,6 @@ LED shows place 0: it lights for one step in eight. The debugger reaches the
 computer through the board's iCELink USB serial port, over the USB-C cable
 that programs it.
 
-**Not working yet:** `debug_build` refuses ECP5 until the Trellis to-do in
-[docs/debugger.md](../../docs/debugger.md) is done. The design builds
-without the debugger.
-
 With the board connected, from the repo's folder:
 
 ```bash

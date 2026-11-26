@@ -6,8 +6,9 @@
 //!    and `expose -cut` for nets the debugger drives), writing
 //!    debug_src/design_debug.v.
 //! 2. soft-agent writes debug_src/debug_top.v (the design, the debugger and
-//!    the override muxes), debug_src/debug.pcf (the user's constraints plus
-//!    the UART pins) and debug_src/logix_debugger.v.
+//!    the override muxes), debug_src/debug.<ext> (the user's constraints
+//!    plus the UART pins, in the family's format) and
+//!    debug_src/logix_debugger.v.
 //! 3. The engine's own build tool builds those into the build folder, and
 //!    debug_map.json goes next to the bitstream.
 
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use logix_engine::catalog::{Family, VariantChoice};
+use logix_engine::catalog::{Toolchain, VariantChoice};
 use logix_engine::errors::{Category, Diagnostic, ToolError};
 use logix_engine::state::EngineState;
 use logix_engine::tools::build as engine_build;
@@ -51,8 +52,8 @@ impl EngineTool for DebugBuild {
         instance path such as main.u_ctrl.state, and the clock the debugger runs on. The debugger \
         talks over the board's UART, so the design must not use the UART pins. The design's \
         own sources are unchanged; a normal build of them has no debugger. Writes \
-        debug_map.json into the build folder, which the debug tools read. Version 1 supports \
-        iCE40 boards. After it, program_board programs the bitstream as for any build.";
+        debug_map.json into the build folder, which the debug tools read. Supports iCE40 and \
+        ECP5 boards so far. After it, program_board programs the bitstream as for any build.";
     const READ_ONLY: bool = false;
     const OPEN_WORLD: bool = true;
     type Input = DebugBuildInput;
@@ -78,7 +79,8 @@ pub struct DebugBuildInput {
     /// The HDL files to build (.v or .sv), relative to the source folder.
     #[schemars(length(min = 1))]
     pub source_files: Vec<String>,
-    /// The constraint file (.pcf), relative to the source folder.
+    /// The constraint file, relative to the source folder: .pcf for iCE40,
+    /// .lpf for ECP5.
     pub constraint_file: String,
     /// The debug configuration file, relative to the source folder, such as
     /// debug.toml.
@@ -119,9 +121,10 @@ pub struct DebugBuildOutput {
 pub struct DebuggerUse {
     pub luts: u32,
     pub flip_flops: u32,
-    /// Each as a share of the FPGA's logic cells, each of which has one
-    /// LUT and one flip-flop on iCE40, such as "8%": rounded up, so "0%"
-    /// only when none. Omitted when the build didn't report the cells.
+    /// Each as a share of the FPGA's LUTs and flip-flops (on iCE40, its
+    /// logic cells, each of which has one of each), such as "8%": rounded
+    /// up, so "0%" only when none. Omitted when the build didn't report
+    /// them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub luts_percent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -131,15 +134,53 @@ pub struct DebuggerUse {
     pub report: String,
 }
 
-/// The FPGA's logic cells, from the engine build's resources (iCE40's
-/// ICESTORM_LC: one LUT and one flip-flop each).
-fn logic_cells(build: &Value) -> Option<u64> {
-    build["resources"]
-        .as_array()?
-        .iter()
-        .find(|r| r["name"] == "ICESTORM_LC")?["available"]
-        .as_u64()
-        .filter(|&n| n > 0)
+/// The FPGA's LUTs and flip-flops, from the engine build's resources.
+#[derive(Clone, Copy)]
+struct Capacity {
+    luts: u64,
+    flip_flops: u64,
+}
+
+fn capacity(toolchain: Toolchain, build: &Value) -> Option<Capacity> {
+    let available = |name: &str| {
+        build["resources"]
+            .as_array()?
+            .iter()
+            .find(|r| r["name"] == name)?["available"]
+            .as_u64()
+            .filter(|&n| n > 0)
+    };
+    match toolchain {
+        // ICESTORM_LC: one LUT and one flip-flop each.
+        Toolchain::Ice40 => available("ICESTORM_LC").map(|n| Capacity {
+            luts: n,
+            flip_flops: n,
+        }),
+        Toolchain::Ecp5 => Some(Capacity {
+            luts: available("TRELLIS_COMB")?,
+            flip_flops: available("TRELLIS_FF")?,
+        }),
+        _ => None,
+    }
+}
+
+/// The toolchains debug_build supports, and what it does differently for
+/// each: the cell library the pre-pass reads, and the synth command and
+/// cells of the debugger's estimate.
+fn supported(board: &logix_engine::board::ResolvedBoard) -> Result<Toolchain, ToolError> {
+    let toolchain = board.fpga.family.toolchain();
+    match toolchain {
+        Toolchain::Ice40 | Toolchain::Ecp5 => Ok(toolchain),
+        _ => Err(ToolError::request(format!(
+            "debug_build supports iCE40 and ECP5 boards so far, and {} is another family.",
+            board.name
+        ))),
+    }
+}
+
+/// The toolchain's yosys cell library, such as +/ice40/cells_sim.v.
+fn cells_sim(toolchain: Toolchain) -> String {
+    format!("+/{}/cells_sim.v", toolchain.id())
 }
 
 /// A share, rounded up as the engine's reports do: "0%" only for none.
@@ -174,19 +215,10 @@ pub async fn run(
     state.ensure_catalog(call).await?;
     let custom = logix_engine::custom_boards::load(input.custom_boards_folder.as_deref())?;
     let board = logix_engine::board::resolve(&input.board, &input.board_variant, &custom)?;
-    if board.fpga.family != Family::Ice40 {
-        return Err(ToolError::request(format!(
-            "debug_build supports iCE40 boards only in version 1, and {} is another family.",
-            board.name
-        )));
-    }
-    if !input.constraint_file.ends_with(".pcf") {
-        return Err(ToolError::request(
-            "constraint_file must be a .pcf file for an iCE40 board.",
-        ));
-    }
+    let toolchain = supported(&board)?;
+    engine_build::check_constraint_extension(&board, &input.constraint_file)?;
     let pcf_text = read(&src.join(&input.constraint_file), "the constraint file")?;
-    let pins = pcf_pins(&pcf_text);
+    let pins = constraint_pins(toolchain, &pcf_text);
     let link = uplink(&config, &board, &pins, &input.constraint_file)?;
 
     // The toolchain, as the engine's build gets it.
@@ -213,7 +245,7 @@ pub async fn run(
         .into_iter()
         .filter(|(n, _)| !pin_ports.contains_key(n))
         .collect();
-    let mut design = prepass(&input, &nets, &src, &gen_dir, &bin, call).await?;
+    let mut design = prepass(&input, toolchain, &nets, &src, &gen_dir, &bin, call).await?;
     for pin in pin_ports.keys() {
         design.widths.insert(pin.clone(), 1);
     }
@@ -256,13 +288,14 @@ pub async fn run(
         }
     }
     write(&gen_dir.join("logix_debugger.v"), DEBUGGER_V)?;
-    let pcf = format!(
-        "{}\n# Added by debug_build: the debugger's UART.\nset_io {TX_PORT} {}\nset_io {RX_PORT} {}\n",
+    let constraints = format!(
+        "{}\n{} Added by debug_build: the debugger's UART.\n{}",
         pcf_text.trim_end(),
-        link.tx,
-        link.rx
+        toolchain.constraint_comment(),
+        uart_constraints(toolchain, &link)
     );
-    write(&gen_dir.join("debug.pcf"), &pcf)?;
+    let constraint_name = format!("debug.{}", toolchain.constraint_extension());
+    write(&gen_dir.join(&constraint_name), &constraints)?;
 
     // 3. The engine's build of the generated files.
     let mut args = serde_json::Map::new();
@@ -285,7 +318,7 @@ pub async fn run(
         "source_files".into(),
         serde_json::json!(["design_debug.v", "debug_top.v", "logix_debugger.v"]),
     );
-    args.insert("constraint_file".into(), "debug.pcf".into());
+    args.insert("constraint_file".into(), constraint_name.into());
     args.insert(
         "build_folder".into(),
         out.to_string_lossy().to_string().into(),
@@ -304,7 +337,16 @@ pub async fn run(
         &out.join(protocol::MAP_FILE),
         &(serde_json::to_string_pretty(&map).unwrap_or_default() + "\n"),
     )?;
-    let debugger = debugger_use(&map, &link, &gen_dir, &bin, call, logic_cells(&value)).await;
+    let debugger = debugger_use(
+        toolchain,
+        &map,
+        &link,
+        &gen_dir,
+        &bin,
+        call,
+        capacity(toolchain, &value),
+    )
+    .await;
 
     Ok(DebugBuildOutput {
         build: value,
@@ -417,6 +459,9 @@ fn in_top(mut config: DebugConfig, top: &str) -> Result<DebugConfig, String> {
 struct Link {
     tx: String,
     rx: String,
+    /// The pins' I/O standard, such as LVCMOS33, when the catalog's UART
+    /// gives one.
+    io_standard: Option<String>,
     baud: u32,
     clock_mhz: f64,
     clks_per_bit: u32,
@@ -436,6 +481,7 @@ fn uplink(
             .and_then(|m| m.values().find(|r| r["type"] == t).cloned())
     };
     let up = &config.uplink;
+    let mut io_standard = None;
     let (tx, rx) = match &up.resource {
         Some(name) => {
             let uarts: Vec<String> = resources
@@ -475,6 +521,7 @@ fn uplink(
                 ));
             }
             let pin = |f: &str| r[f].as_str().map(str::to_string);
+            io_standard = pin("io_standard");
             match (pin("tx"), pin("rx")) {
                 (Some(tx), Some(rx)) => (tx, rx),
                 _ => {
@@ -541,10 +588,69 @@ fn uplink(
     Ok(Link {
         tx,
         rx,
+        io_standard,
         baud,
         clock_mhz,
         clks_per_bit,
     })
+}
+
+/// Port to pin, from the toolchain's constraint file.
+fn constraint_pins(toolchain: Toolchain, text: &str) -> BTreeMap<String, String> {
+    match toolchain {
+        Toolchain::Ecp5 => lpf_pins(text),
+        _ => pcf_pins(text),
+    }
+}
+
+/// The constraints that put the debugger's UART on its pins, in the
+/// toolchain's format.
+fn uart_constraints(toolchain: Toolchain, link: &Link) -> String {
+    let mut out = String::new();
+    for (port, pin) in [(TX_PORT, &link.tx), (RX_PORT, &link.rx)] {
+        match toolchain {
+            Toolchain::Ecp5 => {
+                let _ = writeln!(out, "LOCATE COMP \"{port}\" SITE \"{pin}\";");
+                if let Some(io) = &link.io_standard {
+                    let _ = writeln!(out, "IOBUF PORT \"{port}\" IO_TYPE={io};");
+                }
+            }
+            _ => {
+                let _ = writeln!(out, "set_io {port} {pin}");
+            }
+        }
+    }
+    out
+}
+
+/// Port to pin, from a .lpf's LOCATE COMP statements, such as
+/// LOCATE COMP "led[0]" SITE "A11"; (statements end at ;, comments start
+/// with # or //).
+pub fn lpf_pins(text: &str) -> BTreeMap<String, String> {
+    let code: String = text
+        .lines()
+        .map(|l| {
+            let l = l.split('#').next().unwrap_or("");
+            l.split("//").next().unwrap_or("")
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut pins = BTreeMap::new();
+    for statement in code.split(';') {
+        let words: Vec<String> = statement
+            .split_whitespace()
+            .map(|w| w.trim_matches('"').to_string())
+            .collect();
+        let is = |i: usize, w: &str| words.get(i).is_some_and(|x| x.eq_ignore_ascii_case(w));
+        if is(0, "LOCATE")
+            && is(1, "COMP")
+            && is(3, "SITE")
+            && let Some(pin) = words.get(4)
+        {
+            pins.insert(words[2].clone(), pin.clone());
+        }
+    }
+    pins
 }
 
 /// Port to pin, from a .pcf's set_io lines.
@@ -616,6 +722,7 @@ fn pattern(net: &str) -> String {
 
 async fn prepass(
     input: &DebugBuildInput,
+    toolchain: Toolchain,
     nets: &[(String, bool)],
     src: &Path,
     gen_dir: &Path,
@@ -627,8 +734,9 @@ async fn prepass(
     // a constant net's value straight into its loads (`wire en = 1'b0;`),
     // leaving the net with nothing to drive. Synthesis optimizes later.
     let mut script = format!(
-        "read_verilog -lib +/ice40/cells_sim.v; hierarchy -top {top}; proc -noopt; flatten; \
+        "read_verilog -lib {cells}; hierarchy -top {top}; proc -noopt; flatten; \
          select {top}; write_json -selected {pre}; select -clear; ",
+        cells = cells_sim(toolchain),
         top = input.top_module,
         pre = q(&gen_dir.join("pre.json"))
     );
@@ -1117,12 +1225,13 @@ fn debug_top(
 // --- The debugger's own share ----------------------------------------------
 
 async fn debugger_use(
+    toolchain: Toolchain,
     map: &DebugMap,
     link: &Link,
     gen_dir: &Path,
     bin: &Path,
     call: &Call,
-    cells: Option<u64>,
+    cap: Option<Capacity>,
 ) -> DebuggerUse {
     let read_w = map.watch.iter().map(|i| i.width).sum::<usize>().max(1);
     let write_w = map.drive.iter().map(|o| o.width).sum::<usize>().max(1);
@@ -1130,8 +1239,9 @@ async fn debugger_use(
     let script = format!(
         "read_verilog logix_debugger.v; chparam -set CLKS_PER_BIT {} -set READ_W {read_w} \
          -set WRITE_W {write_w} -set OVR_W {enables} logix_debugger; \
-         synth_ice40 -top logix_debugger; tee -o debugger_stat.txt stat",
-        link.clks_per_bit
+         synth_{} -top logix_debugger; tee -o debugger_stat.txt stat",
+        link.clks_per_bit,
+        toolchain.id()
     );
     let args: Vec<OsString> = vec!["-q".into(), "-p".into(), script.into()];
     let program = logix_engine::commands::program_in(bin, "yosys");
@@ -1149,21 +1259,27 @@ async fn debugger_use(
         if let [n, cell] = w.as_slice()
             && let Ok(n) = n.parse::<u32>()
         {
-            if *cell == "SB_LUT4" {
-                luts += n;
-            } else if cell.starts_with("SB_DFF") {
-                ffs += n;
-            }
+            let (l, f) = cell_use(toolchain, cell);
+            luts += l * n;
+            ffs += f * n;
         }
     }
-    let luts_percent = cells.map(|c| percent(luts, c));
-    let flip_flops_percent = cells.map(|c| percent(ffs, c));
-    let report = match (luts, cells) {
+    let luts_percent = cap.map(|c| percent(luts, c.luts));
+    let flip_flops_percent = cap.map(|c| percent(ffs, c.flip_flops));
+    let report = match (luts, cap) {
         (0, _) => "The debugger's own share couldn't be measured.".to_string(),
+        (_, Some(c)) if toolchain == Toolchain::Ice40 => format!(
+            "The debugger uses about {luts} LUTs ({}) and {ffs} flip-flops ({}) of the FPGA's {} logic cells.",
+            percent(luts, c.luts),
+            percent(ffs, c.flip_flops),
+            c.luts
+        ),
         (_, Some(c)) => format!(
-            "The debugger uses about {luts} LUTs ({}) and {ffs} flip-flops ({}) of the FPGA's {c} logic cells.",
-            percent(luts, c),
-            percent(ffs, c)
+            "The debugger uses about {luts} of the FPGA's {} LUTs ({}) and {ffs} of its {} flip-flops ({}).",
+            c.luts,
+            percent(luts, c.luts),
+            c.flip_flops,
+            percent(ffs, c.flip_flops)
         ),
         (_, None) => format!("The debugger uses about {luts} LUTs and {ffs} flip-flops of that."),
     };
@@ -1173,6 +1289,19 @@ async fn debugger_use(
         luts_percent,
         flip_flops_percent,
         report,
+    }
+}
+
+/// The LUTs and flip-flops one cell of the synthesized debugger takes.
+fn cell_use(toolchain: Toolchain, cell: &str) -> (u32, u32) {
+    match toolchain {
+        Toolchain::Ice40 if cell == "SB_LUT4" => (1, 0),
+        Toolchain::Ice40 if cell.starts_with("SB_DFF") => (0, 1),
+        Toolchain::Ecp5 if cell == "LUT4" => (1, 0),
+        // A carry cell is two LUTs of a slice.
+        Toolchain::Ecp5 if cell == "CCU2C" => (2, 0),
+        Toolchain::Ecp5 if cell == "TRELLIS_FF" => (0, 1),
+        _ => (0, 0),
     }
 }
 
@@ -1230,6 +1359,19 @@ fn diagnostic(file: &str, line: u32, message: &str) -> Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lpf_pins_read_locate_comp() {
+        let p = lpf_pins(
+            "# x\nLOCATE COMP \"sys_clk\" SITE \"P6\";\nIOBUF PORT \"sys_clk\" IO_TYPE=LVCMOS33;\n\
+             locate comp \"led[0]\"\n  site \"A11\"; // c\nLOCATE COMP x SITE B9; LOCATE COMP y SITE A9;\n",
+        );
+        assert_eq!(p["sys_clk"], "P6");
+        assert_eq!(p["led[0]"], "A11");
+        assert_eq!(p["x"], "B9");
+        assert_eq!(p["y"], "A9");
+        assert_eq!(p.len(), 4);
+    }
 
     #[test]
     fn pcf_pins_read_set_io() {

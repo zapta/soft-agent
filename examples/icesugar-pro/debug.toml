@@ -7,8 +7,8 @@ clock = "sys_clk"
 
 # The board's UART, by its name in the board catalog: the on-board iCELink's
 # USB serial port, over the same USB-C cable that programs the board.
-# 115200 baud for now: this link's top speed hasn't been measured yet.
-uplink = { kind = "uart", resource = "uart", baud = 115200 }
+# 1,000,000 baud: exactly 25 clocks a bit from the 25 MHz clock.
+uplink = { kind = "uart", resource = "uart", baud = 1000000 }
 
 # Net paths start with the top module, main. A net has any width; a list
 # combines one-bit nets and pins into one bus.
