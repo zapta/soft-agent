@@ -59,8 +59,7 @@ def main():
             check(True, f"debug build {b['build_id']}")
 
             print("\n== Programming the board")
-            port, device = board_port(sa, bf)
-            port = a.port or port
+            port, device = board_port(sa, bf, a.port)
             print(f"device {device}\nserial port {port}")
             sa.tool("program_board", {"build_folder": bf, "device": device})
             check(True, "program_board")

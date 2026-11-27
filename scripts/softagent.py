@@ -97,14 +97,28 @@ class SoftAgent:
                 self.proc.kill()
 
 
-def board_port(sa, build_folder=None):
+def board_port(sa, build_folder=None, port=None):
     """The serial port of the one connected board (that fits the build, when
     given), and its device id; exits with a message when there isn't
-    exactly one."""
+    exactly one. With `port` (the user's --port), the board needn't have a
+    serial port in list_devices: that port is used, and the board found is
+    the one to program."""
     args = {"build_folder": build_folder} if build_folder else {}
     found = sa.tool("list_devices", args)
-    devices = [d for d in found.get("devices", [])
-               if d.get("serial_port") and (build_folder or d.get("likely_boards"))]
+
+    def fits(d):
+        # With a build folder, list_devices lists only the devices that fit it.
+        return build_folder or d.get("likely_boards")
+
+    if port:
+        devices = [d for d in found.get("devices", []) if fits(d)]
+        if len(devices) > 1:
+            # Several boards: the one with this port, when the engine knows it.
+            mine = [d for d in devices
+                    if any(p.get("port") == port for p in d.get("serial_ports", []))]
+            devices = mine or devices
+    else:
+        devices = [d for d in found.get("devices", []) if d.get("serial_port") and fits(d)]
     if not devices:
         # Seen but not openable, such as on Linux before its udev rule.
         for u in found.get("unreachable", []):
@@ -112,8 +126,15 @@ def board_port(sa, build_folder=None):
             print(f"  To fix it: python scripts/tool.py install_driver device={u['id']}", file=sys.stderr)
         if found.get("unreachable"):
             sys.exit("The board can't be opened yet: see above.")
+        if not port and any(fits(d) for d in found.get("devices", [])):
+            sys.exit("The board is connected, but list_devices gives it no serial port: "
+                     "give its port with --port (on Windows, Device Manager lists it under Ports).")
         sys.exit("No board found: connect the board with its USB cable and try again.")
     if len(devices) > 1:
+        if port:
+            names = ", ".join(d.get("who", d["id"]) for d in devices)
+            sys.exit(f"Several boards are connected ({names}), and none is known to have {port}: "
+                     "connect only the one to check.")
         names = ", ".join(f"{d['serial_port']} ({d.get('who', d['id'])})" for d in devices)
         sys.exit(f"Several boards are connected: {names}. Give one with --port.")
-    return devices[0]["serial_port"], devices[0]["id"]
+    return port or devices[0]["serial_port"], devices[0]["id"]

@@ -110,8 +110,7 @@ def main():
                 return
 
             step("Programming the board")
-            port, device = board_port(sa, build_folder)
-            port = args.port or port
+            port, device = board_port(sa, build_folder, args.port)
             sa.tool("program_board", {"build_folder": build_folder, "device": device})
             print("Done.")
 
