@@ -6,7 +6,6 @@
 //! (docs/debugger.md, Sessions in other programs).
 
 use std::fs::{File, OpenOptions, TryLockError};
-use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
 /// A held lock: released when dropped (the OS releases it also when the
@@ -18,6 +17,16 @@ pub struct PortLock {
 /// The lock file of a port: the same for the names a port may go by
 /// (on macOS /dev/tty.x and /dev/cu.x; on Windows COM8 and com8).
 fn lock_path(port: &str) -> PathBuf {
+    file_path(port, "lock")
+}
+
+/// The file beside the lock that names its holder's process. Not the lock
+/// file itself: on Windows a locked file can't be read by other processes.
+fn pid_path(port: &str) -> PathBuf {
+    file_path(port, "pid")
+}
+
+fn file_path(port: &str, extension: &str) -> PathBuf {
     let port = port.replace("/dev/tty.", "/dev/cu.").to_lowercase();
     let name: String = port
         .chars()
@@ -25,7 +34,7 @@ fn lock_path(port: &str) -> PathBuf {
         .collect();
     std::env::temp_dir()
         .join("logix-debug-sessions")
-        .join(format!("{name}.lock"))
+        .join(format!("{name}.{extension}"))
 }
 
 /// Whether two port names name the same port.
@@ -64,17 +73,15 @@ impl Holder {
 /// another process has it, and Ok(None) when the lock file can't be used
 /// (then the session goes on without one).
 pub fn take(port: &str) -> Result<Option<PortLock>, Holder> {
-    let Ok(mut file) = open_file(port) else {
+    let Ok(file) = open_file(port) else {
         return Ok(None);
     };
     match file.try_lock() {
         Ok(()) => {
-            let _ = file.set_len(0);
-            let _ = write!(file, "{}", std::process::id());
-            let _ = file.flush();
+            let _ = std::fs::write(pid_path(port), std::process::id().to_string());
             Ok(Some(PortLock { _file: file }))
         }
-        Err(TryLockError::WouldBlock) => Err(holder(&mut file)),
+        Err(TryLockError::WouldBlock) => Err(holder(port)),
         Err(TryLockError::Error(_)) => Ok(None),
     }
 }
@@ -83,18 +90,18 @@ pub fn take(port: &str) -> Result<Option<PortLock>, Holder> {
 /// ports this process has no session on: within one process, a session's
 /// own lock reads as held on some systems.
 pub fn holder_of(port: &str) -> Option<Holder> {
-    let mut file = open_file(port).ok()?;
+    let file = open_file(port).ok()?;
     match file.try_lock() {
         Ok(()) => None, // Dropping the file releases it.
-        Err(TryLockError::WouldBlock) => Some(holder(&mut file)),
+        Err(TryLockError::WouldBlock) => Some(holder(port)),
         Err(TryLockError::Error(_)) => None,
     }
 }
 
-fn holder(file: &mut File) -> Holder {
-    let mut text = String::new();
-    let _ = file.rewind();
-    let _ = file.read_to_string(&mut text);
+/// The holder of a held lock. Its pid file may be from an earlier holder
+/// for a moment, while a new one is writing it, or missing.
+fn holder(port: &str) -> Holder {
+    let text = std::fs::read_to_string(pid_path(port)).unwrap_or_default();
     Holder {
         pid: text.trim().parse().ok(),
     }
@@ -131,5 +138,6 @@ mod tests {
         drop(lock);
         assert_eq!(holder_of(&port), None);
         let _ = std::fs::remove_file(lock_path(&port));
+        let _ = std::fs::remove_file(pid_path(&port));
     }
 }

@@ -818,7 +818,8 @@ see the cost to-do under To do before porting.
   itself after the board was unplugged and plugged back in.
 - **Sessions in other programs:** a session holds a lock file for its port
   (`logix-debug-sessions/<port>.lock` in the system's temporary folder,
-  with its process ID) from `debug_open` until it closes or its program
+  with its process ID in `<port>.pid` beside it, since on Windows other
+  processes can't read a locked file) from `debug_open` until it closes or its program
   ends, also while the port itself is closed for a reconnect. Another
   soft-agent program then refuses `debug_open` on that port, and
   `program_board` for the board with that port, with a setup error naming
