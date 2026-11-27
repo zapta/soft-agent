@@ -1049,7 +1049,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "logix-engine"
 version = "0.0.0"
-source = "git+https://github.com/openlogix/logix-engine?branch=main#58ae4ed0d3c052f51a657204e55bebe02f5ae555"
+source = "git+https://github.com/openlogix/logix-engine?branch=main#cafbf6feea17c1d0a7dd0e616ab833b5a0baecb2"
 dependencies = [
  "clap",
  "dunce",
