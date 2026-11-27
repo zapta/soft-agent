@@ -659,8 +659,17 @@ Open as of 2026-11-25, to be gone over one at a time:
   with the rest, as a third Logix Viewer app beside Logix Waveforms and
   Logix Diagrams, with its own name and dock icon (see Path into Logix
   Engine later).
-- [ ] **Windows and Linux.** Sessions have run only on macOS. Test them
-  with the engine's serial port and driver handling on Windows and Linux.
+- [ ] **Windows and Linux.** Test sessions with the engine's serial port
+  and driver handling on Windows and Linux.
+  - [x] **Windows.** Tested on 2026-11-27 on Windows 11 Pro (x64), Python
+    3.15, the iCESugar v1.5 and pre-release `pre-2026-11-27`: the
+    automated check passed (1.06 ms a read, 2.07 ms a write), and so did
+    the panel by hand. After a replug the panel resumed by itself in about
+    2 s. With the port in use, a second session stopped at once with
+    "access is denied". It needed the engine to match serial numbers in
+    any case (Windows reports them in uppercase) and the scripts to take
+    `--port` when `list_devices` gives no port.
+  - [ ] **Linux.**
 - [ ] **Freeze the formats.** Once in the engine, `debug.toml`, the debug
   map, the protocol (version 3) and the tool names are public. Review them
   once more before porting.
