@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use logix_engine::errors::{Category, ToolError};
 use logix_engine::tools::EngineTool;
 
+use super::lock;
 use super::protocol::{self, DebugMap};
 
 /// How long a reply may take. A READ of 255 bytes takes about 23 ms at
@@ -34,6 +35,9 @@ struct Session {
     /// reported them (each READ does) or the host last wrote them.
     wr: Vec<bool>,
     en: Vec<bool>,
+    /// The port's lock across processes (super::lock), held while the
+    /// session is open; None when the lock file couldn't be used.
+    _lock: Option<lock::PortLock>,
 }
 
 fn sessions() -> &'static Mutex<BTreeMap<String, Session>> {
@@ -52,6 +56,12 @@ fn with_session<T>(
         ))
     })?;
     f(s)
+}
+
+/// The ports of this process's debug sessions.
+pub fn session_ports() -> Vec<String> {
+    let all = sessions().lock().unwrap_or_else(|e| e.into_inner());
+    all.values().map(|s| s.port_name.clone()).collect()
 }
 
 /// A frame to send: its command and payload.
@@ -359,6 +369,17 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
             )));
         }
     }
+    let port_lock = lock::take(&input.port).map_err(|h| {
+        ToolError::setup(format!(
+            "{} is in a debug session in another program{}.",
+            input.port,
+            h.process()
+        ))
+        .with_details(
+            "Close that session first: press Enter in the terminal of debug_run.py or \
+             debug_panel.py, or call debug_close in the program that opened it.",
+        )
+    })?;
     let port = serialport::new(&input.port, map.baud)
         .timeout(Duration::from_millis(20))
         .open()
@@ -375,6 +396,7 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
         wr: vec![false; map.write_bits],
         en: vec![false; map.enables],
         map,
+        _lock: port_lock,
     };
     let board_id = match board_build(&mut s)? {
         Ok(id) => id,

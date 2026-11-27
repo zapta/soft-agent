@@ -669,7 +669,13 @@ Open as of 2026-11-25, to be gone over one at a time:
     "access is denied". It needed the engine to match serial numbers in
     any case (Windows reports them in uppercase) and the scripts to take
     `--port` when `list_devices` gives no port.
-  - [ ] **Linux.**
+  - [ ] **Linux.** Tested on 2026-11-27 with the iCESugar v1.5 and
+    pre-release `pre-2026-11-27`: everything passed but the second
+    session. A second program's `program_board` reprogrammed the board
+    under an open session (Linux, like macOS, locks the port only while it
+    is open, and the session had closed it when the board restarted), and
+    the panel then resumed on the other program's build. Sessions now hold
+    a lock across programs (Sessions in other programs, below); retest it.
 - [ ] **Freeze the formats.** Once in the engine, `debug.toml`, the debug
   map, the protocol (version 3) and the tool names are public. Review them
   once more before porting.
@@ -810,6 +816,18 @@ see the cost to-do under To do before porting.
   session releases every override and clears its copy of the written
   values to match. Tested on the iCESugar v1.5 on 2026-11-25: the panel resumed by
   itself after the board was unplugged and plugged back in.
+- **Sessions in other programs:** a session holds a lock file for its port
+  (`logix-debug-sessions/<port>.lock` in the system's temporary folder,
+  with its process ID) from `debug_open` until it closes or its program
+  ends, also while the port itself is closed for a reconnect. Another
+  soft-agent program then refuses `debug_open` on that port, and
+  `program_board` for the board with that port, with a setup error naming
+  the process, before it programs anything: programming would put another
+  design, perhaps with another debug configuration, under the session.
+  `program_board` in the session's own program goes ahead as before (the
+  session checks the build ID when it reconnects). The plain engine and
+  other programs don't see the lock; in the engine, `program_board` would
+  check it itself.
   `debug_read` reads watched nets only; to read a driven net, list it in `watch`
   as well.
 - **Batches:** the host sends each operation's frames in one write, up to
@@ -861,8 +879,11 @@ see the cost to-do under To do before porting.
 - **The plot:** the panel's Plot section draws every read's watched values
   over the last 10 seconds to 5 minutes: one bit as a high/low trace, more
   as a stepped line scaled to the values in view, with a hover cursor for a
-  moment's time and values. It samples at the refresh rate (up to 50 a
-  second), so it is a strip chart, not a logic analyzer: changes faster
+  moment's time and values. A value holds until the next read, a failed
+  read, or the time the status stops being Live (three refresh periods, at
+  least 5 s), so where reads failed, the board was unplugged or the panel
+  was paused, the plot is empty, as before the first read. It samples at
+  the refresh rate (up to 50 a second), so it is a strip chart, not a logic analyzer: changes faster
   than the refresh don't show, and fast counters look like sawtooths. The
   capture phase is for those.
 - **The panel:** `src/debug/panel.rs` serves `panel.html` from the

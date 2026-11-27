@@ -32,6 +32,57 @@ pub fn all_definitions() -> Vec<Tool> {
     ]
 }
 
+/// Refuses program_board for a board that is in a debug session in another
+/// soft-agent process: programming it would change the design under that
+/// session, which would open the port again on the new design (see
+/// crate::debug::lock). Returns the refusal, or None to let the engine
+/// program it. A board in a session of this process is left to the engine,
+/// as before: that session checks the build again when it reconnects.
+pub async fn guard_program_board(
+    state: &EngineState,
+    name: &str,
+    arguments: Option<&JsonObject>,
+) -> Option<CallToolResult> {
+    use crate::debug::lock;
+    use logix_engine::tools::list_devices;
+    if name != "program_board" {
+        return None;
+    }
+    let device = arguments?.get("device")?.as_str()?.to_string();
+    let state = state.clone();
+    let refusal = tokio::task::spawn_blocking(move || {
+        let devices = list_devices::run(&state, Default::default()).ok()?.devices;
+        let d = devices
+            .iter()
+            .find(|d| d.id == device || list_devices::same_device(&d.id, &device))?;
+        let own = session::session_ports();
+        let ports = d
+            .serial_ports
+            .iter()
+            .map(|p| p.port.clone())
+            .chain(d.serial_port.clone());
+        ports
+            .filter(|p| !own.iter().any(|o| lock::same_port(o, p)))
+            .find_map(|p| lock::holder_of(&p).map(|h| (p, h)))
+            .map(|(port, h)| {
+                logix_engine::errors::ToolError::setup(format!(
+                    "The board on {port} is in a debug session in another program{}: \
+                     programming it would change the design under that session.",
+                    h.process()
+                ))
+                .with_details(
+                    "Close that session first: press Enter in the terminal of debug_run.py \
+                     or debug_panel.py, or call debug_close in the program that opened it.",
+                )
+            })
+    })
+    .await
+    .ok()??;
+    log::info!("program_board refused: {}", refusal.message);
+    let display = Default::default();
+    Some(to_call_result::<()>(&display, Err(refusal)))
+}
+
 /// Runs an extension tool by name. Returns None when the name isn't one,
 /// so the engine handles it.
 pub async fn call(

@@ -3,6 +3,7 @@
 
 pub mod build;
 pub mod config;
+pub mod lock;
 pub mod panel;
 pub mod protocol;
 pub mod session;
