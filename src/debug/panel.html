@@ -618,6 +618,9 @@
   }
 
   $("pause").onclick = () => {
+    // Resumed: the values before the pause end at it (or at a read made
+    // with Refresh while paused), not staleAfter later.
+    if (paused) addGap(Math.max(pausedAt, samples.length ? samples[samples.length - 1].t : 0));
     paused = !paused;
     pausedAt = paused ? Date.now() : null;
     $("pause").textContent = paused ? "Resume" : "Pause";
@@ -662,7 +665,7 @@
     keep({ t, bits });
   }
 
-  // A failed read: the values before it end there.
+  // A failed read or a pause: the values before it end there.
   function addGap(t) {
     if (samples.length && !samples[samples.length - 1].gap) keep({ t, gap: true });
   }

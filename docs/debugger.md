@@ -881,8 +881,8 @@ see the cost to-do under To do before porting.
   over the last 10 seconds to 5 minutes: one bit as a high/low trace, more
   as a stepped line scaled to the values in view, with a hover cursor for a
   moment's time and values. A value holds until the next read, a failed
-  read, or the time the status stops being Live (three refresh periods, at
-  least 5 s), so where reads failed, the board was unplugged or the panel
+  read, a pause, or the time the status stops being Live (three refresh
+  periods, at least 5 s), so where reads failed, the board was unplugged or the panel
   was paused, the plot is empty, as before the first read. It samples at
   the refresh rate (up to 50 a second), so it is a strip chart, not a logic analyzer: changes faster
   than the refresh don't show, and fast counters look like sawtooths. The
