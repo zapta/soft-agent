@@ -17,7 +17,7 @@ see examples/alhambra1. The steps, each a soft-agent tool:
 1. download_packages: the toolchain, the first time (a few minutes).
 2. debug_build: the design with the debugger, into _build_debug.
 3. program_board: the bitstream into the connected board.
-4. debug_open and debug_panel: the panel in the browser, until Enter.
+4. open_debug and open_debug_panel: the panel in the browser, until Enter.
 """
 
 import argparse
@@ -116,7 +116,7 @@ def main():
 
             # The FPGA starts the design; from flash that can take seconds.
             step("Opening the debug panel")
-            open_panel(sa, build_folder, port, not args.no_open, wait=15)
+            open_panel(sa, build_folder, port, not args.no_open, wait=15, device=device)
         except ToolFailed as e:
             err = e.error
             print(f"\n{e.tool} failed: {err.get('message', err)}", file=sys.stderr)

@@ -72,7 +72,7 @@ pub async fn guard_program_board(
                 ))
                 .with_details(
                     "Close that session first: press Enter in the terminal of debug_run.py \
-                     or debug_panel.py, or call debug_close in the program that opened it.",
+                     or debug_panel.py, or call close_debug in the program that opened it.",
                 )
             })
     })

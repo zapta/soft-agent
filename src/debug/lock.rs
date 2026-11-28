@@ -2,7 +2,7 @@
 //! lock file for as long as it is open, so that other soft-agent processes
 //! can tell the board is in a session even while the session has the port
 //! closed, such as after the board restarted, until it opens it again.
-//! program_board and debug_open in another process then refuse that board
+//! program_board and open_debug in another process then refuse that board
 //! (docs/debugger.md, Sessions in other programs).
 
 use std::fs::{File, OpenOptions, TryLockError};

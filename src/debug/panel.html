@@ -306,7 +306,7 @@
   }
 
   // A typed drive value, read in the row's format unless it has its own
-  // 0x or 0b prefix, as the text debug_write takes.
+  // 0x or 0b prefix, as the text write_debug takes.
   function typedValue(text, fmt) {
     const t = text.trim().replace(/_/g, "");
     if (/^0[xb]/i.test(t) || fmt === "dec") return t;
@@ -600,7 +600,7 @@
       if (!sessions.includes(session)) session = sessions[0] || "";
       sel.value = session;
       $("session-box").hidden = sessions.length < 2;
-      if (!session) showError(new Error("No debug session is open. Open one with debug_open, then reload."));
+      if (!session) showError(new Error("No debug session is open. Open one with open_debug, then reload."));
     } catch (e) {
       showError(e);
     }

@@ -269,7 +269,7 @@ Writes:
   the UART can't time one clock: a PULSE command loads a mask into a
   register that is high for one clock. The net's load side is then
   `pulse ^ (en ? value : design)`, one XOR and one flip-flop per one-bit
-  entry; wider entries and lists get neither, and `debug_write` refuses to
+  entry; wider entries and lists get neither, and `write_debug` refuses to
   pulse them. Watch samples far slower than a clock, so a pulse doesn't
   show there; its effects do. A pulse on a register's output also feeds
   that register's next value, as an override does, so pulses suit control
@@ -455,11 +455,11 @@ debug map. All are soft-agent extension tools in the engine's style
 | Tool | Does | Notes |
 | --- | --- | --- |
 | `debug_build` | Builds with a debug file: inserts the debugger, then the usual synthesis, place and route, packing | Same fields as `build`, plus `debug_file`; writes `debug_map.json` and reports the debugger's resources apart |
-| `debug_open` | Opens a session on a board's debugger, from a build folder and a serial port | Reads the debugger's build ID first and refuses a mismatch (R8) |
-| `debug_read` | Reads named nets, in one snapshot | Values as numbers and as bit strings, with widths |
-| `debug_write` | Writes a named net, releases an override back to the design, or pulses a one-bit net | Refuses names that aren't in drive, and pulses on nets wider than one bit |
-| `debug_close` | Ends the session | |
-| `debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused, then Plot, a live strip chart of the watched values; each watched row shows its value in a format chosen per row (hex, decimal or binary); each driven net has value and release controls (0, 1 and Pulse buttons for one bit; a pulse the board took flashes the row's state) |
+| `open_debug` | Opens a session on a board's debugger, from a build folder and a serial port, and optionally the board's `device` (its ID from `list_devices`, as for `open_serial`) | Reads the debugger's build ID first and refuses a mismatch (R8); with `device`, finds the port again after an unplug, even under another name |
+| `read_debug` | Reads named nets, in one snapshot | Values as numbers and as bit strings, with widths |
+| `write_debug` | Writes a named net, releases an override back to the design, or pulses a one-bit net | Refuses names that aren't in drive, and pulses on nets wider than one bit |
+| `close_debug` | Ends the session | |
+| `open_debug_panel` | Opens an interactive panel for a session in the browser | Drive first, then Watch, which refreshes live and can be paused, then Plot, a live strip chart of the watched values; each watched row shows its value in a format chosen per row (hex, decimal or binary); each driven net has value and release controls (0, 1 and Pulse buttons for one bit; a pulse the board took flashes the row's state) |
 
 - **The port is shared.** The debugger owns the UART while a session is open,
   so the engine's `open_serial` on the same port is refused in version 1. A
@@ -471,11 +471,11 @@ debug map. All are soft-agent extension tools in the engine's style
 - **Results:** in milestone 1 they show in Claude Code or any MCP client as
   structured tool results; request and reply, not a stream.
 - **Triggers and counters:** the host sets each trigger's condition and
-  clears counters, with a tool of its own or as part of `debug_write`; to
+  clears counters, with a tool of its own or as part of `write_debug`; to
   be decided with their protocol commands. Counters are read with
-  `debug_read`, in the same snapshot as the watched nets, so the panel's
+  `read_debug`, in the same snapshot as the watched nets, so the panel's
   Watch table and Plot show them as they are.
-- **Capture phase:** `debug_capture` arms a capture with a trigger, and its
+- **Capture phase:** a tool of its own, such as `capture_debug`, arms a capture with a trigger, and its
   result is a VCD file in the build folder, so the engine's `open_waveform`
   shows it with no new viewer.
 
@@ -599,7 +599,7 @@ and tool names move unchanged; only where the code lives changes. To keep that e
   and drives the board while it is open, so it needs a live channel to the
   engine's session, which the page contract (`window.logixHost`, version
   1) doesn't have. Designing that channel, for Logix Viewer and for hosts,
-  is part of the port: today `debug_panel` serves the page from a local
+  is part of the port: today `open_debug_panel` serves the page from a local
   web server instead. The app's icon and the Logix Viewer side are
   logix-core's.
 - **Editing the debug file in a host** (2026-11-28): the file stays the
@@ -652,7 +652,7 @@ Open as of 2026-11-25, to be gone over one at a time:
   - [x] **openXC7 (Artix-7, Spartan-7, Zynq-7000).** Tested on the Arty
     A7-35T (`examples/arty-a7-35t`, 2026-11-26): reads, holds, pulses,
     drives and releases as on iCE40, at 1,000,000 baud, programmed to
-    flash. Right after programming, the first `debug_open` got no reply
+    flash. Right after programming, the first `open_debug` got no reply
     while the FPGA loaded from flash; a second one a little later
     worked.
 - [x] **Board data in the catalog** (done 2026-11-26). The catalog's clock
@@ -721,8 +721,18 @@ Open as of 2026-11-25, to be gone over one at a time:
     frees the board. A pause no longer draws the last value on for up to
     5 s after it (`pre-2026-11-28`, checked on macOS).
 - [ ] **Freeze the formats.** Once in the engine, `debug.toml`, the debug
-  map, the protocol (version 3) and the tool names are public. Review them
-  once more before porting.
+  map, the protocol (version 1) and the tool names are public. Review them
+  once more before porting. Reviewed 2026-11-28: the session tools now go
+  by the engine's verb_noun names (`open_debug`, `read_debug`,
+  `write_debug`, `close_debug`, `open_debug_panel`; they were
+  `debug_open` and so on), and `open_debug` takes an optional `device`,
+  as `open_serial` does. `debug_build` stays until the port, where it
+  becomes `build` with a `debug_file`.
+- [ ] **Schema address.** `debug.toml`'s `#:schema` line and
+  `schemas/logix-debug-v1.json` point at this repo, under a personal
+  account. Before porting, move the schema to an Open Logix address (the
+  user picks which, at port time), and change it in `src/debug/config.rs`
+  (the schema's `$id`), the schema file and the examples' `debug.toml`.
 
 ### To do after porting
 
@@ -839,10 +849,10 @@ see the cost to-do under To do before porting.
   and `logix_debugger.v`.
   The engine's `build` builds them into the build folder, next to
   `debug_map.json`.
-- **Sessions:** `debug_open` checks the build ID, then releases every
-  override and clears the write registers. `debug_close` releases them
+- **Sessions:** `open_debug` checks the build ID, then releases every
+  override and clears the write registers. `close_debug` releases them
   too. Every READ reply carries the write values and enables as the
-  debugger holds them: `debug_write` reports the state it reads back after
+  debugger holds them: `write_debug` reports the state it reads back after
   writing, and the panel reads the drive state back from the board at
   every refresh, so it shows what the debugger really drives. When the
   board doesn't answer, the panel shows the last state written, marked
@@ -850,9 +860,9 @@ see the cost to-do under To do before porting.
   open session restarted it, and the panel's next read showed the override
   released. A build made before protocol 1 (2026-11-26) is refused: build
   it again.
-  Every `debug_read` and `debug_write` asks the debugger for its build ID
+  Every `read_debug` and `write_debug` asks the debugger for its build ID
   first (one INFO frame, about a millisecond), and refuses when the board
-  was programmed with another build after `debug_open`, since the session's
+  was programmed with another build after `open_debug`, since the session's
   map would no longer fit.
 - **Reconnecting:** a link error (no reply, or the port gone, such as with
   the board unplugged) closes the session's port, and the next read or
@@ -865,9 +875,9 @@ see the cost to-do under To do before porting.
 - **Sessions in other programs:** a session holds a lock file for its port
   (`logix-debug-sessions/<port>.lock` in the system's temporary folder,
   with its process ID in `<port>.pid` beside it, since on Windows other
-  processes can't read a locked file) from `debug_open` until it closes or its program
+  processes can't read a locked file) from `open_debug` until it closes or its program
   ends, also while the port itself is closed for a reconnect. Another
-  soft-agent program then refuses `debug_open` on that port, and
+  soft-agent program then refuses `open_debug` on that port, and
   `program_board` for the board with that port, with a setup error naming
   the process, before it programs anything: programming would put another
   design, perhaps with another debug configuration, under the session.
@@ -875,20 +885,20 @@ see the cost to-do under To do before porting.
   session checks the build ID when it reconnects). The plain engine and
   other programs don't see the lock; in the engine, `program_board` would
   check it itself.
-  `debug_read` reads watched nets only; to read a driven net, list it in `watch`
+  `read_debug` reads watched nets only; to read a driven net, list it in `watch`
   as well.
 - **Batches:** the host sends each operation's frames in one write, up to
   48 bytes (the receive buffer holds 64), and then reads the replies in
   order, so an operation pays the USB serial chip's round trip once: a
-  `debug_read` is INFO and READ together; a `debug_write` is an INFO first
+  `read_debug` is INFO and READ together; a `write_debug` is an INFO first
   (nothing is written to another build), then a WRITE (or PULSE) and a
   READ together; a panel refresh is two batches. A
   refused frame doesn't end a batch early: its other replies are still read,
   so none is left on the line. Measured 2026-11-25 (protocol 3); with
   protocol 1, on 2026-11-26, the iCESugar v1.5 at 1,000,000 baud measured
-  1.03 ms a `debug_read` (970/s) and 2.0 ms a `debug_write`, the same:
+  1.03 ms a `read_debug` (970/s) and 2.0 ms a `write_debug`, the same:
 
-  | Board (USB serial chip) | `debug_read` | `debug_write` | Panel refresh |
+  | Board (USB serial chip) | `read_debug` | `write_debug` | Panel refresh |
   | --- | --- | --- | --- |
   | Alhambra II (FTDI, 16 ms latency timer) | 16 ms, 62/s (48 ms before batches) | 32 ms (64 ms) | 34 ms (about 100 ms) |
   | iCESugar v1.5 (its DAPLink's USB serial) | 4 ms, 249/s | 6 ms | 9 ms |
@@ -936,10 +946,10 @@ see the cost to-do under To do before porting.
 - **The panel:** `src/debug/panel.rs` serves `panel.html` from the
   soft-agent process on 127.0.0.1, on a port the system picks, while
   soft-agent runs. Every request needs the server's random token, which is
-  in the address `debug_panel` returns, and a `127.0.0.1` or `localhost`
+  in the address `open_debug_panel` returns, and a `127.0.0.1` or `localhost`
   Host header, so other web pages can't reach the board through it. Its API
   is `GET /api/sessions`, `GET /api/state?session=` (the session's map, the
   host's drive values and a fresh snapshot) and `POST /api/write` (the
-  `debug_write` input). It polls at slightly irregular periods (about 4 per
+  `write_debug` input). It polls at slightly irregular periods (about 4 per
   second, 1 per second, or every 5 s), since a round period can match a
   design's own and show the same phase at every read.

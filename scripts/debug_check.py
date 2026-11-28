@@ -67,20 +67,20 @@ def main():
             print("\n== The session")
             for i in range(30):
                 try:
-                    o = sa.tool("debug_open", {"build_folder": bf, "port": port})
+                    o = sa.tool("open_debug", {"build_folder": bf, "port": port, "device": device})
                     break
                 except ToolFailed:
                     if i == 29:
                         raise
                     time.sleep(0.5)
             sid = o["session"]
-            check(o["build_id"] == b["build_id"], f"debug_open: the board runs build {o['build_id']}")
+            check(o["build_id"] == b["build_id"], f"open_debug: the board runs build {o['build_id']}")
 
             def read():
-                return {v["name"]: v for v in sa.tool("debug_read", {"session": sid})["values"]}
+                return {v["name"]: v for v in sa.tool("read_debug", {"session": sid})["values"]}
 
             def write(**kw):
-                return sa.tool("debug_write", {"session": sid, **kw})
+                return sa.tool("write_debug", {"session": sid, **kw})
 
             r1 = read()
             time.sleep(0.3)
@@ -126,7 +126,7 @@ def main():
             dt = (time.perf_counter() - t) / 100
             check(True, f"100 writes: {dt * 1000:.2f} ms a write")
 
-            check(sa.tool("debug_close", {"session": sid})["released"], "debug_close releases everything")
+            check(sa.tool("close_debug", {"session": sid})["released"], "close_debug releases everything")
         except ToolFailed as e:
             err = e.error
             print(f"\n{e.tool} failed: {err.get('message', err)}")

@@ -46,8 +46,8 @@ pub struct DebugBuild;
 impl EngineTool for DebugBuild {
     const NAME: &'static str = "debug_build";
     const DESCRIPTION: &'static str = "Builds an FPGA design with the Logix debugger in it, so a \
-        host can read and drive the design's nets on the board while it runs (debug_open, \
-        debug_read, debug_write). Takes the same fields as build, plus debug_file: a TOML \
+        host can read and drive the design's nets on the board while it runs (open_debug, \
+        read_debug, write_debug). Takes the same fields as build, plus debug_file: a TOML \
         file in the source folder naming the nets to watch (read) and drive, by \
         instance path such as main.u_ctrl.state, and the clock the debugger runs on. The debugger \
         talks over the board's UART, so the design must not use the UART pins. The design's \

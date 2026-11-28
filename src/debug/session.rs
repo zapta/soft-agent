@@ -1,5 +1,5 @@
-//! The debug session tools: debug_open, debug_read, debug_write and
-//! debug_close (docs/debugger.md, Host side). A session holds a board's
+//! The debug session tools: open_debug, read_debug, write_debug and
+//! close_debug (docs/debugger.md, Host side). A session holds a board's
 //! serial port and the debug map of the build on the board.
 
 use std::collections::BTreeMap;
@@ -13,6 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use logix_engine::errors::{Category, ToolError};
+use logix_engine::serial::{DeviceKey, usb_ports};
 use logix_engine::tools::EngineTool;
 
 use super::lock;
@@ -38,6 +39,9 @@ struct Session {
     /// The port's lock across processes (super::lock), held while the
     /// session is open; None when the lock file couldn't be used.
     _lock: Option<lock::PortLock>,
+    /// The port's own key and USB interface, when open_debug had a device:
+    /// to find the port again after an unplug, even under another name.
+    owner: Option<(DeviceKey, Option<u8>)>,
 }
 
 fn sessions() -> &'static Mutex<BTreeMap<String, Session>> {
@@ -52,7 +56,7 @@ fn with_session<T>(
     let mut all = sessions().lock().unwrap_or_else(|e| e.into_inner());
     let s = all.get_mut(id).ok_or_else(|| {
         ToolError::request(format!(
-            "session: {id:?} isn't an open debug session. Open one with debug_open."
+            "session: {id:?} isn't an open debug session. Open one with open_debug."
         ))
     })?;
     f(s)
@@ -81,6 +85,7 @@ const MAX_BATCH: usize = 48;
 /// port, so the next call tries again (the board unplugged and back).
 fn transact_many(s: &mut Session, frames: &[Frame]) -> Result<Vec<Vec<u8>>, ToolError> {
     if s.port.is_none() {
+        follow_device(s)?;
         let port = serialport::new(&s.port_name, s.map.baud)
             .timeout(Duration::from_millis(20))
             .open()
@@ -104,6 +109,60 @@ fn transact_many(s: &mut Session, frames: &[Frame]) -> Result<Vec<Vec<u8>>, Tool
         s.port = None;
     }
     result
+}
+
+/// With a device, the port's name now: found again by the port's key and
+/// interface, as the engine's serial sessions do, since a board plugged
+/// back in may get another name. The lock moves to the new name.
+fn follow_device(s: &mut Session) -> Result<(), ToolError> {
+    let Some((key, interface)) = &s.owner else {
+        return Ok(());
+    };
+    let Some((_, p)) = usb_ports()
+        .into_iter()
+        .find(|(k, p)| k == key && p.interface == *interface)
+    else {
+        return Ok(()); // Not back yet: opening the old name says so.
+    };
+    if lock::same_port(&p.port, &s.port_name) {
+        return Ok(());
+    }
+    let new_lock = lock::take(&p.port).map_err(|h| {
+        ToolError::setup(format!(
+            "The board is back as {}, which is in a debug session in another program{}.",
+            p.port,
+            h.process()
+        ))
+    })?;
+    log::info!(
+        "Debug session's board moved from {} to {}",
+        s.port_name,
+        p.port
+    );
+    s._lock = new_lock;
+    s.port_name = p.port;
+    Ok(())
+}
+
+/// A device ID's USB IDs and serial number (the engine's format,
+/// usb:<location>:<vid>:<pid>:<serial>), as the engine's open_serial reads it.
+fn device_key(id: &str) -> Result<DeviceKey, ToolError> {
+    let parts: Option<Vec<&str>> = id
+        .strip_prefix("usb:")
+        .map(|rest| rest.splitn(4, ':').collect());
+    let bad = || {
+        ToolError::request(format!(
+            "device: {id:?} isn't a device ID. Use the id of a device from list_devices."
+        ))
+    };
+    let Some([_location, vid, pid, serial]) = parts.as_deref() else {
+        return Err(bad());
+    };
+    Ok(DeviceKey {
+        vid: u16::from_str_radix(vid, 16).map_err(|_| bad())?,
+        pid: u16::from_str_radix(pid, 16).map_err(|_| bad())?,
+        serial_number: (!serial.is_empty()).then(|| serial.to_string()),
+    })
 }
 
 /// One frame and its reply's payload.
@@ -253,7 +312,7 @@ fn info_build(s: &Session, info: &[u8]) -> Result<Result<String, String>, ToolEr
 }
 
 /// Before each read and write: the board may have been programmed with
-/// another build since debug_open, and the map would then be wrong.
+/// another build since open_debug, and the map would then be wrong.
 fn same_build(s: &mut Session) -> Result<(), ToolError> {
     let build = board_build(s)?;
     build_ok(s, build)
@@ -274,7 +333,7 @@ fn build_ok(s: &mut Session, build: Result<String, String>) -> Result<(), ToolEr
         Err(board_id) => Err(ToolError::new(
             Category::Setup,
             format!(
-                "The board now runs another build (ID {board_id}), not this session's (ID {}): it was programmed after debug_open. Close this session, and open one with the build folder of the build on the board.",
+                "The board now runs another build (ID {board_id}), not this session's (ID {}): it was programmed after open_debug. Close this session, and open one with the build folder of the build on the board.",
                 s.map.build_id
             ),
         )
@@ -283,17 +342,19 @@ fn build_ok(s: &mut Session, build: Result<String, String>) -> Result<(), ToolEr
     }
 }
 
-// --- debug_open -------------------------------------------------------------
+// --- open_debug -------------------------------------------------------------
 
 pub struct DebugOpen;
 
 impl EngineTool for DebugOpen {
-    const NAME: &'static str = "debug_open";
+    const NAME: &'static str = "open_debug";
     const DESCRIPTION: &'static str = "Opens a debug session with the Logix debugger on a board, \
         for a build made by debug_build and programmed with program_board. Give the build \
         folder (its debug_map.json names the nets) and the board's serial port (a device's \
-        serial_port from list_devices). Checks that the board runs that very build, by its \
-        build ID, and refuses another. Opening releases every override, so the design runs on \
+        serial_port from list_devices). Give device too (its id from list_devices): then the \
+        session finds the port again when the board is plugged back in, even under another \
+        name. Checks that the board runs that very build, by its build ID, and refuses \
+        another. Opening releases every override, so the design runs on \
         its own. The debugger owns the port while the session is open: don't open a serial \
         session on it too, and close the debug session before program_board.";
     const READ_ONLY: bool = false;
@@ -308,6 +369,11 @@ pub struct DebugOpenInput {
     pub build_folder: String,
     /// The serial port, such as /dev/cu.usbmodem1102 or COM5.
     pub port: String,
+    /// The device the port belongs to, by its id from list_devices, so the
+    /// session finds the port again after the board is unplugged, even
+    /// under another name. Omitted means the port alone.
+    #[serde(default)]
+    pub device: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -315,6 +381,9 @@ pub struct DebugOpenOutput {
     /// The session's ID, for the other debug tools.
     pub session: String,
     pub port: String,
+    /// The device given, whose port the session follows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
     /// The build ID the board's debugger reported, which matches the map.
     pub build_id: String,
     /// What can be driven: each driven net's name and width.
@@ -360,9 +429,25 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
             protocol::PROTOCOL_VERSION
         )));
     }
+    // The port's own key and USB interface, as the serial port list reports
+    // them (its serial number may differ from the device ID's), as the
+    // engine's open_serial finds them.
+    let owner = match &input.device {
+        Some(id) => {
+            let device = device_key(id)?;
+            usb_ports()
+                .into_iter()
+                .find(|(k, p)| k.vid == device.vid && k.pid == device.pid && p.port == input.port)
+                .map(|(k, p)| (k, p.interface))
+        }
+        None => None,
+    };
     {
         let all = sessions().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((id, _)) = all.iter().find(|(_, s)| s.port_name == input.port) {
+        if let Some((id, _)) = all
+            .iter()
+            .find(|(_, s)| lock::same_port(&s.port_name, &input.port))
+        {
             return Err(ToolError::request(format!(
                 "Debug session {id} already has {}: use it, or close it first.",
                 input.port
@@ -377,7 +462,7 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
         ))
         .with_details(
             "Close that session first: press Enter in the terminal of debug_run.py or \
-             debug_panel.py, or call debug_close in the program that opened it.",
+             debug_panel.py, or call close_debug in the program that opened it.",
         )
     })?;
     let port = serialport::new(&input.port, map.baud)
@@ -397,6 +482,7 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
         en: vec![false; map.enables],
         map,
         _lock: port_lock,
+        owner,
     };
     let board_id = match board_build(&mut s)? {
         Ok(id) => id,
@@ -414,6 +500,7 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
     let out = DebugOpenOutput {
         session: String::new(),
         port: input.port.clone(),
+        device: input.device.clone(),
         build_id: board_id,
         watch: s
             .map
@@ -446,15 +533,15 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
     Ok(DebugOpenOutput { session: id, ..out })
 }
 
-// --- debug_read -------------------------------------------------------------
+// --- read_debug -------------------------------------------------------------
 
 pub struct DebugRead;
 
 impl EngineTool for DebugRead {
-    const NAME: &'static str = "debug_read";
+    const NAME: &'static str = "read_debug";
     const DESCRIPTION: &'static str = "Reads nets of the running design through a debug \
         session, all in one snapshot taken in a single clock cycle. Give the watched names to \
-        read (from debug_open), or none for all. Each value comes as bits (most significant \
+        read (from open_debug), or none for all. Each value comes as bits (most significant \
         first), as hex and, up to 53 bits, as a number.";
     const READ_ONLY: bool = true;
     type Input = DebugReadInput;
@@ -464,7 +551,7 @@ impl EngineTool for DebugRead {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DebugReadInput {
-    /// The session, from debug_open.
+    /// The session, from open_debug.
     pub session: String,
     /// The watched nets to read, by name. Omitted means all.
     #[serde(default)]
@@ -560,14 +647,14 @@ fn net_value(name: &str, net: &str, bits: &[bool]) -> NetValue {
     }
 }
 
-// --- debug_write ------------------------------------------------------------
+// --- write_debug ------------------------------------------------------------
 
 pub struct DebugWrite;
 
 impl EngineTool for DebugWrite {
-    const NAME: &'static str = "debug_write";
+    const NAME: &'static str = "write_debug";
     const DESCRIPTION: &'static str = "Drives a net of the running design through a debug \
-        session: one of its drive names from debug_open. Writing takes the net over from the \
+        session: one of its drive names from open_debug. Writing takes the net over from the \
         design until release; release gives it back. The value is a number, or a string in hex (0x..), binary (0b..) \
         or decimal, and must fit the net's width. pulse, for a one-bit net, flips its value for one \
         clock, whether it is driven or released, and leaves it as it was.";
@@ -579,7 +666,7 @@ impl EngineTool for DebugWrite {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DebugWriteInput {
-    /// The session, from debug_open.
+    /// The session, from open_debug.
     pub session: String,
     /// The net to drive, by its name in the debug file's drive list.
     pub name: String,
@@ -752,12 +839,12 @@ fn parse_value(value: &serde_json::Value, width: usize) -> Result<Vec<bool>, Too
     Ok(bits)
 }
 
-// --- debug_close ------------------------------------------------------------
+// --- close_debug ------------------------------------------------------------
 
 pub struct DebugClose;
 
 impl EngineTool for DebugClose {
-    const NAME: &'static str = "debug_close";
+    const NAME: &'static str = "close_debug";
     const DESCRIPTION: &'static str = "Ends a debug session: releases every override, so the \
         design runs on its own, and frees the serial port.";
     const READ_ONLY: bool = false;
@@ -768,7 +855,7 @@ impl EngineTool for DebugClose {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DebugCloseInput {
-    /// The session, from debug_open.
+    /// The session, from open_debug.
     pub session: String,
 }
 

@@ -7,8 +7,8 @@ Run it through scripts/debug-panel.sh, which builds soft-agent first:
 or with Python after `cargo build --release` (`python
 scripts/debug_panel.py BUILD_FOLDER ...`), where bash isn't at hand.
 
-It starts soft-agent, opens a debug session (debug_open) and the panel
-(debug_panel), and waits; Enter or Ctrl-C closes the session, which releases
+It starts soft-agent, opens a debug session (open_debug) and the panel
+(open_debug_panel), and waits; Enter or Ctrl-C closes the session, which releases
 every override and frees the port. Without --port it uses the serial port
 of the one connected board that fits the build.
 """
@@ -22,32 +22,37 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from softagent import SoftAgent, ToolFailed, board_port, default_engine_folder, default_server  # noqa: E402
 
 
-def open_session(sa, build_folder, port, wait=0):
-    """debug_open, trying again for up to `wait` seconds while the debugger
-    doesn't answer, as while an FPGA loads its design from flash."""
+def open_session(sa, build_folder, port, wait=0, device=None):
+    """open_debug, trying again for up to `wait` seconds while the debugger
+    doesn't answer, as while an FPGA loads its design from flash. With
+    `device` (its list_devices id), the session finds the board again
+    after an unplug, even under another port name."""
     deadline = time.monotonic() + wait
     while True:
         try:
-            return sa.tool("debug_open", {"build_folder": build_folder, "port": port})
+            args = {"build_folder": build_folder, "port": port}
+            if device:
+                args["device"] = device
+            return sa.tool("open_debug", args)
         except ToolFailed as e:
             if "didn't answer" not in e.error.get("message", "") or time.monotonic() > deadline:
                 raise
             time.sleep(1)
 
 
-def open_panel(sa, build_folder, port, open_browser=True, wait=0):
+def open_panel(sa, build_folder, port, open_browser=True, wait=0, device=None):
     """Opens a session and the panel, waits for Enter or Ctrl-C, then
-    closes the session. `wait` is as for open_session."""
-    s = open_session(sa, build_folder, port, wait)
+    closes the session. `wait` and `device` are as for open_session."""
+    s = open_session(sa, build_folder, port, wait, device)
     print(f"Session {s['session']} on {port}, build {s['build_id']}")
-    panel = sa.tool("debug_panel", {"session": s["session"], "open": open_browser})
+    panel = sa.tool("open_debug_panel", {"session": s["session"], "open": open_browser})
     print(f"Panel: {panel['url']}")
     try:
         input("Press Enter to close the session (or Ctrl-C)... ")
     except (KeyboardInterrupt, EOFError):
         print()
     finally:
-        released = sa.tool("debug_close", {"session": s["session"]})["released"]
+        released = sa.tool("close_debug", {"session": s["session"]})["released"]
         print("Closed; overrides released." if released else "Closed; couldn't release the overrides.")
 
 
@@ -66,8 +71,8 @@ def main():
         try:
             # The board that fits this build, so another board connected too
             # doesn't get in the way.
-            port = args.port or board_port(sa, folder)[0]
-            open_panel(sa, folder, port, not args.no_open)
+            port, device = (args.port, None) if args.port else board_port(sa, folder)
+            open_panel(sa, folder, port, not args.no_open, device=device)
         except ToolFailed as e:
             sys.exit(str(e))
 

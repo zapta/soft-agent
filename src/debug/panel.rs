@@ -1,4 +1,4 @@
-//! debug_panel: an interactive page for a debug session, served by
+//! open_debug_panel: an interactive page for a debug session, served by
 //! soft-agent on 127.0.0.1 and opened in the browser. It shows the watched
 //! nets live and drives and releases the driven ones, through the same sessions as
 //! the debug tools.
@@ -264,12 +264,12 @@ fn state(id: &str, read_values: bool) -> Result<Value, ToolError> {
 pub struct DebugPanel;
 
 impl EngineTool for DebugPanel {
-    const NAME: &'static str = "debug_panel";
+    const NAME: &'static str = "open_debug_panel";
     const DESCRIPTION: &'static str = "Opens an interactive panel for a debug session in the \
         browser: it shows the watched nets live (as hex, decimal and bits) and has controls \
         to drive each driven net and release it. soft-agent serves it on this computer only, at \
         127.0.0.1, with a random token in its address. The panel uses the same session as \
-        debug_read and debug_write, so both can be used at once. Returns the address; with \
+        read_debug and write_debug, so both can be used at once. Returns the address; with \
         open false it only returns it, such as for a host that shows pages itself.";
     const READ_ONLY: bool = false;
     type Input = DebugPanelInput;
@@ -279,7 +279,7 @@ impl EngineTool for DebugPanel {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DebugPanelInput {
-    /// The session, from debug_open.
+    /// The session, from open_debug.
     pub session: String,
     /// Open the panel in the default browser. Defaults to true.
     #[serde(default)]
