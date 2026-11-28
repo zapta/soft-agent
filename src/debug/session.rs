@@ -42,6 +42,9 @@ struct Session {
     /// The port's own key and USB interface, when open_debug had a device:
     /// to find the port again after an unplug, even under another name.
     owner: Option<(DeviceKey, Option<u8>)>,
+    /// Set while program_board writes the board: the port stays closed,
+    /// and reads and writes are refused, until it's done (Pause).
+    paused: bool,
 }
 
 fn sessions() -> &'static Mutex<BTreeMap<String, Session>> {
@@ -68,6 +71,41 @@ pub fn session_ports() -> Vec<String> {
     all.values().map(|s| s.port_name.clone()).collect()
 }
 
+/// Pauses this process's sessions on `ports` while program_board writes
+/// their board: each closes its port, so the programmer and a restarting
+/// board don't meet an open port, and refuses reads and writes. Dropping
+/// the guard ends the pause; the next read or write then reopens the port
+/// and checks the build ID, as after an unplug.
+pub fn pause(ports: &[String]) -> Pause {
+    let mut all = sessions().lock().unwrap_or_else(|e| e.into_inner());
+    let mut ids = Vec::new();
+    for (id, s) in all.iter_mut() {
+        if ports.iter().any(|p| lock::same_port(p, &s.port_name)) {
+            s.port = None;
+            s.paused = true;
+            ids.push(id.clone());
+            log::info!("Debug session {id} paused for program_board");
+        }
+    }
+    Pause { ids }
+}
+
+/// Paused sessions, resumed when dropped.
+pub struct Pause {
+    ids: Vec<String>,
+}
+
+impl Drop for Pause {
+    fn drop(&mut self) {
+        let mut all = sessions().lock().unwrap_or_else(|e| e.into_inner());
+        for id in &self.ids {
+            if let Some(s) = all.get_mut(id) {
+                s.paused = false;
+            }
+        }
+    }
+}
+
 /// A frame to send: its command and payload.
 type Frame = (u8, Vec<u8>);
 
@@ -84,6 +122,12 @@ const MAX_BATCH: usize = 48;
 /// Opens the port again first when the link broke; a link error drops the
 /// port, so the next call tries again (the board unplugged and back).
 fn transact_many(s: &mut Session, frames: &[Frame]) -> Result<Vec<Vec<u8>>, ToolError> {
+    if s.paused {
+        return Err(ToolError::setup(format!(
+            "The board on {} is being programmed (program_board): the session reconnects when it's done.",
+            s.port_name
+        )));
+    }
     if s.port.is_none() {
         follow_device(s)?;
         let port = serialport::new(&s.port_name, s.map.baud)
@@ -356,7 +400,8 @@ impl EngineTool for DebugOpen {
         name. Checks that the board runs that very build, by its build ID, and refuses \
         another. Opening releases every override, so the design runs on \
         its own. The debugger owns the port while the session is open: don't open a serial \
-        session on it too, and close the debug session before program_board.";
+        session on it too. program_board on the board pauses the session, which reconnects \
+        after and checks the build again.";
     const READ_ONLY: bool = false;
     type Input = DebugOpenInput;
     type Output = DebugOpenOutput;
@@ -483,6 +528,7 @@ pub fn open(input: DebugOpenInput) -> Result<DebugOpenOutput, ToolError> {
         map,
         _lock: port_lock,
         owner,
+        paused: false,
     };
     let board_id = match board_build(&mut s)? {
         Ok(id) => id,

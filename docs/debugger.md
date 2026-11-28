@@ -465,9 +465,13 @@ debug map. All are soft-agent extension tools in the engine's style
   so the engine's `open_serial` on the same port is refused in version 1. A
   console channel in the protocol, so text the design prints still reaches a
   Serial Monitor, can come later.
-- **Programming:** a debug session should pause while `program_board` writes
-  the board and reconnect after, checking the build ID again. Version 1 may
-  instead ask the host to close the session before programming.
+- **Programming:** a debug session pauses while `program_board` writes
+  its board, in the same program (built 2026-11-28): its port is closed,
+  and reads and writes are refused with a setup error saying the board is
+  being programmed. After, the next read or write reopens the port and
+  checks the build ID again, as after an unplug: the same build goes on
+  with every override released (the board restarted), and another build
+  is refused. Tested on the iCESugar v1.5.
 - **Results:** in milestone 1 they show in Claude Code or any MCP client as
   structured tool results; request and reply, not a stream.
 - **Triggers and counters:** the host sets each trigger's condition and
@@ -883,8 +887,8 @@ see the cost to-do under To do before porting.
   `program_board` for the board with that port, with a setup error naming
   the process, before it programs anything: programming would put another
   design, perhaps with another debug configuration, under the session.
-  `program_board` in the session's own program goes ahead as before (the
-  session checks the build ID when it reconnects). The plain engine and
+  `program_board` in the session's own program goes ahead, pausing the
+  session (Host side, Programming). The plain engine and
   other programs don't see the lock; in the engine, `program_board` would
   check it itself.
   `read_debug` reads watched nets only; to read a driven net, list it in `watch`

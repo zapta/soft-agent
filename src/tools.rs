@@ -32,38 +32,47 @@ pub fn all_definitions() -> Vec<Tool> {
     ]
 }
 
-/// Refuses program_board for a board that is in a debug session in another
-/// soft-agent process: programming it would change the design under that
-/// session, which would open the port again on the new design (see
-/// crate::debug::lock). Returns the refusal, or None to let the engine
-/// program it. A board in a session of this process is left to the engine,
-/// as before: that session checks the build again when it reconnects.
+/// Before program_board: refuses a board that is in a debug session in
+/// another soft-agent process (its lock file, crate::debug::lock), since
+/// programming it would change the design under that session. Otherwise
+/// pauses this process's sessions on the board until the returned guard
+/// is dropped, after programming; they reconnect and check the build
+/// again. Ok(None) for other tools, or when the board isn't found (the
+/// engine then reports it).
 pub async fn guard_program_board(
     state: &EngineState,
     name: &str,
     arguments: Option<&JsonObject>,
-) -> Option<CallToolResult> {
+) -> Result<Option<session::Pause>, CallToolResult> {
     use crate::debug::lock;
     use logix_engine::tools::list_devices;
     if name != "program_board" {
-        return None;
+        return Ok(None);
     }
-    let device = arguments?.get("device")?.as_str()?.to_string();
+    let Some(device) = arguments
+        .and_then(|a| a.get("device"))
+        .and_then(|d| d.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(None);
+    };
     let state = state.clone();
-    let refusal = tokio::task::spawn_blocking(move || {
+    let found = tokio::task::spawn_blocking(move || {
         let devices = list_devices::run(&state, Default::default()).ok()?.devices;
         let d = devices
             .iter()
             .find(|d| d.id == device || list_devices::same_device(&d.id, &device))?;
-        let own = session::session_ports();
-        let ports = d
+        let ports: Vec<String> = d
             .serial_ports
             .iter()
             .map(|p| p.port.clone())
-            .chain(d.serial_port.clone());
-        ports
+            .chain(d.serial_port.clone())
+            .collect();
+        let own = session::session_ports();
+        let refusal = ports
+            .iter()
             .filter(|p| !own.iter().any(|o| lock::same_port(o, p)))
-            .find_map(|p| lock::holder_of(&p).map(|h| (p, h)))
+            .find_map(|p| lock::holder_of(p).map(|h| (p.clone(), h)))
             .map(|(port, h)| {
                 logix_engine::errors::ToolError::setup(format!(
                     "The board on {port} is in a debug session in another program{}: \
@@ -74,13 +83,24 @@ pub async fn guard_program_board(
                     "Close that session first: press Enter in the terminal of debug_run.py \
                      or debug_panel.py, or call close_debug in the program that opened it.",
                 )
-            })
+            });
+        Some(match refusal {
+            Some(r) => Err(r),
+            None => Ok(session::pause(&ports)),
+        })
     })
     .await
-    .ok()??;
-    log::info!("program_board refused: {}", refusal.message);
-    let display = Default::default();
-    Some(to_call_result::<()>(&display, Err(refusal)))
+    .ok()
+    .flatten();
+    match found {
+        None => Ok(None),
+        Some(Ok(pause)) => Ok(Some(pause)),
+        Some(Err(refusal)) => {
+            log::info!("program_board refused: {}", refusal.message);
+            let display = Default::default();
+            Err(to_call_result::<()>(&display, Err(refusal)))
+        }
+    }
 }
 
 /// Runs an extension tool by name. Returns None when the name isn't one,

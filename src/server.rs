@@ -82,11 +82,14 @@ impl ServerHandler for SoftAgentServer {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let name = request.name.to_string();
-        if let Some(refusal) =
-            tools::guard_program_board(&self.state, &name, request.arguments.as_ref()).await
-        {
-            return Ok(refusal.into());
-        }
+        // Held until program_board is done: this process's debug sessions on
+        // the board stay paused meanwhile.
+        let _pause =
+            match tools::guard_program_board(&self.state, &name, request.arguments.as_ref()).await
+            {
+                Ok(pause) => pause,
+                Err(refusal) => return Ok(refusal.into()),
+            };
         match tools::call(&self.state, &name, request.arguments.clone()).await {
             Some(result) => {
                 log::info!("Extension tool call: {name}");
