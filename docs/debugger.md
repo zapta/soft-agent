@@ -24,9 +24,14 @@ Goals:
 - **Movable:** built so the feature can later move into Logix Engine without
   changing the file format or the tools.
 
-**Next phase, planned:** capture. The debugger records chosen signals on the
-board and sends them up to the host, to view as a waveform (like ILA or
-SignalTap). The first version leaves room for it in the file format, the
+**Next phases, planned** (2026-11-28): triggers and counters first, then
+capture on the same triggers. A trigger watches chosen signals for a
+condition in the design's own clock; a counter counts a trigger's events,
+so it sees one-clock events that the host's polling misses; capture
+records chosen signals around a trigger on the board and sends them up to
+the host, to view as a waveform (like ILA or SignalTap). Each is optional:
+a debug file without them builds the debugger as today, with none of their
+logic. The first version leaves room for them in the file format, the
 debugger and the protocol, as each section notes.
 
 Out of scope for both: on-chip CPUs, JTAG uplinks and multi-board setups.
@@ -82,6 +87,9 @@ constrain them.
 | R13 | Works for every family the engine builds (iCE40, ECP5, Gowin, Xilinx 7), with no per-family code in the debugger. | Should |
 | R14 | Capture (the planned next phase): record listed signals on the board, such as into block RAM from a trigger condition, and send them up to the host as a waveform. The first version's file, debugger and protocol leave room for it. | Next phase |
 | R15 | Other uplinks: JTAG, SPI, USB through a soft USB core. | Later |
+| R16 | Triggers (the next phase, before capture): conditions on listed signals, checked every clock of the design: a value under a mask, a rising or falling edge or any change, and AND or OR of a few of them. Which signals a trigger looks at is fixed by the build; its condition is set from the host while the design runs, with no rebuild. Sequences (A then B within N clocks) and a trigger output pin come later. | Next phase |
+| R17 | Counters (with triggers): each counts one trigger's events, every clock. A counter saturates at its limit and never wraps: binary all-ones by default, or a decimal limit such as 99999, so a counter at its limit means that many or more. The host reads counters as read-only values in the same snapshot as the watched nets, and clears them. | Next phase |
+| R18 | Triggers, counters and capture are each opt-in: a debug file without them builds no logic for them, and a normal build has none of the debugger. | Next phase |
 
 Non-functional: the debugger stays small (a target under 300 iCE40 logic
 cells for 8 probes; to be measured), it must not lower the design's maximum
@@ -201,10 +209,13 @@ net = "main.u_ctrl.state"
   a write holds a steady value until release, and a one-bit entry can
   also pulse (Pulses, in the next section). Neither needs a key.
 
-For the capture phase, the file gains a `capture` section alongside `watch`
-and `drive` (signals, depth, trigger, sample clock). Version 1 reserves the
-key and refuses it with "not supported yet", so files written now stay valid
-later.
+For the next phases, the file gains `trigger` (the signals each trigger
+looks at), `count` (each counter's trigger and limit) and `capture`
+(signals, depth, trigger, sample clock) alongside `watch` and `drive`, each
+optional (R18). Version 1 reserves the three keys and refuses them with
+"not supported yet"; any other unknown key is refused too, so no file
+valid now can clash with them later. What a trigger looks for is not in
+the file: the host sets it while the design runs (R16).
 
 Decided: one debug file per build request; merging several files can come
 later.
@@ -459,6 +470,11 @@ debug map. All are soft-agent extension tools in the engine's style
   instead ask the host to close the session before programming.
 - **Results:** in milestone 1 they show in Claude Code or any MCP client as
   structured tool results; request and reply, not a stream.
+- **Triggers and counters:** the host sets each trigger's condition and
+  clears counters, with a tool of its own or as part of `debug_write`; to
+  be decided with their protocol commands. Counters are read with
+  `debug_read`, in the same snapshot as the watched nets, so the panel's
+  Watch table and Plot show them as they are.
 - **Capture phase:** `debug_capture` arms a capture with a trigger, and its
   result is a VCD file in the build folder, so the engine's `open_waveform`
   shows it with no new viewer.
@@ -586,6 +602,27 @@ and tool names move unchanged; only where the code lives changes. To keep that e
   is part of the port: today `debug_panel` serves the page from a local
   web server instead. The app's icon and the Logix Viewer side are
   logix-core's.
+- **Editing the debug file in a host** (2026-11-28): the file stays the
+  source, and a host's editor, such as Logix IDE's, edits it: tables for
+  Watch, Drive, Triggers, Counters and Capture, an add button with a
+  searchable list of the design's nets, right-click on a signal in the
+  code to add it, a mark beside the nets in the file, names that match no
+  net flagged as typed, and the debugger's estimated cost as the file
+  changes. The file stays editable by hand and by AI agents, and the
+  editor keeps its comments where it can. What every host needs comes from
+  the engine, not each host:
+  - **The design's nets:** a tool (such as `list_nets`) that runs the
+    debug build's first step, yosys reading and elaborating the design,
+    and returns every net with its instance path, width and kind (port,
+    register, wire), named as the debug file names them (generate names
+    as yosys prints them). About a second for these designs, with no
+    synthesis and no board. A design that doesn't parse gives an error;
+    the editor keeps its last list and says it is out of date.
+  - **Checking a debug file** against those nets, and **the cost
+    estimate**, as `debug_build`'s report gives it now.
+
+  Settings that cost no logic, such as trigger conditions, arming and
+  clearing counters, stay in the panel, not the file.
 - **What the engine would need:** a hook for extra synthesis passes in
   `build::synth_script`, or a pre-synthesis step; today soft-agent works
   around its absence (Build integration). Proposing that hook is an engine
@@ -713,6 +750,8 @@ Open as of 2026-11-25, to be gone over one at a time:
 | Q11 | Versions and compatibility before release? | None kept while in early development (the user, 2026-11-26): the protocol started again at version 1 then, and a change may break older builds, which are refused and built again |
 | Q12 | Port the debugger to Logix Engine? | Yes (the user, 2026-11-26): the build, the session tools, the formats and the panel move into the engine |
 | Q13 | Where the panel goes? | Into the engine, as a third Logix Viewer app beside Logix Waveforms and Logix Diagrams, with its own dock icon; hosts such as Logix IDE show its page themselves (the user, 2026-11-26) |
+| Q14 | Triggers, counters and capture: in which order, and do they cost a build that doesn't use them? | Triggers and counters first, then capture on the same triggers; each opt-in, with no logic when the file leaves it out; counters saturate and never wrap (R16 to R18; the user, 2026-11-28) |
+| Q15 | How a user edits the debug file in an IDE? | With a GUI over the same file, which stays the source; the engine lists a design's nets for it (Path into Logix Engine later; the user, 2026-11-28) |
 
 ## First milestone
 

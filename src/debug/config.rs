@@ -35,6 +35,14 @@ pub struct DebugConfig {
     /// Nets the host reads.
     #[serde(default)]
     pub watch: Vec<WatchNet>,
+    /// Reserved for the triggers phase; refused in version 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    pub trigger: Option<toml::Value>,
+    /// Reserved for the counters of the triggers phase; refused in version 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    pub count: Option<toml::Value>,
     /// Reserved for the capture phase; refused in version 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(skip)]
@@ -187,8 +195,14 @@ pub fn parse(text: &str) -> Result<DebugConfig, String> {
     for o in &mut config.drive {
         o.parts = parts(&mut o.net, &o.spec, &o.name)?;
     }
-    if config.capture.is_some() {
-        return Err("capture isn't supported yet: it comes in a later version.".into());
+    for (key, present) in [
+        ("trigger", config.trigger.is_some()),
+        ("count", config.count.is_some()),
+        ("capture", config.capture.is_some()),
+    ] {
+        if present {
+            return Err(format!("{key} isn't supported yet: it comes in a later version."));
+        }
     }
     let u = &config.uplink;
     match (&u.resource, &u.tx, &u.rx) {
@@ -380,7 +394,15 @@ name = "two_pins"
             ),
             (
                 r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"a"}],"capture":{}}"#,
-                "capture",
+                "capture isn't supported yet",
+            ),
+            (
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"a"}],"trigger":[]}"#,
+                "trigger isn't supported yet",
+            ),
+            (
+                r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"},"watch":[{"net":"a"}],"count":[]}"#,
+                "count isn't supported yet",
             ),
             (
                 r#"{"clock":"c","uplink":{"kind":"uart","resource":"uart"}}"#,
