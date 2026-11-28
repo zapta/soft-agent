@@ -730,9 +730,11 @@ Open as of 2026-11-25, to be gone over one at a time:
   becomes `build` with a `debug_file`.
 - [ ] **Schema address.** `debug.toml`'s `#:schema` line and
   `schemas/logix-debug-v1.json` point at this repo, under a personal
-  account. Before porting, move the schema to an Open Logix address (the
-  user picks which, at port time), and change it in `src/debug/config.rs`
-  (the schema's `$id`), the schema file and the examples' `debug.toml`.
+  account. Before porting, move the schema to an Open Logix address, and change it in `src/debug/config.rs`
+  (the schema's `$id`), the schema file and the examples' `debug.toml`. Planned
+  (2026-11-28): `https://www.openlogix.org/schemas/logix-debug-v1.json`,
+  published by the website from the engine repo's copy, so the address
+  doesn't depend on a repo's layout; confirm at port time.
 
 ### To do after porting
 
