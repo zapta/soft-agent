@@ -659,7 +659,7 @@ Open as of 2026-11-25, to be gone over one at a time:
   with the rest, as a third Logix Viewer app beside Logix Waveforms and
   Logix Diagrams, with its own name and dock icon (see Path into Logix
   Engine later).
-- [ ] **Windows and Linux.** Test sessions with the engine's serial port
+- [x] **Windows and Linux** (done 2026-11-28). Test sessions with the engine's serial port
   and driver handling on Windows and Linux.
   - [x] **Windows.** Tested on 2026-11-27 on Windows 11 Pro (x64), Python
     3.15, the iCESugar v1.5 and pre-release `pre-2026-11-27`: the
@@ -669,13 +669,20 @@ Open as of 2026-11-25, to be gone over one at a time:
     "access is denied". It needed the engine to match serial numbers in
     any case (Windows reports them in uppercase) and the scripts to take
     `--port` when `list_devices` gives no port.
-  - [ ] **Linux.** Tested on 2026-11-27 with the iCESugar v1.5 and
+  - [x] **Linux.** Tested on 2026-11-27 with the iCESugar v1.5 and
     pre-release `pre-2026-11-27`: everything passed but the second
     session. A second program's `program_board` reprogrammed the board
     under an open session (Linux, like macOS, locks the port only while it
     is open, and the session had closed it when the board restarted), and
     the panel then resumed on the other program's build. Sessions now hold
-    a lock across programs (Sessions in other programs, below); retest it.
+    a lock across programs (Sessions in other programs, below).
+  - [x] **Retest** (2026-11-28, `pre-2026-11-27` and `pre-2026-11-28`),
+    on Linux, Windows and macOS: a second program's `debug_check.py` is
+    refused at once with the session's process number, and the panel and
+    the board are unaffected; the plot leaves a gap while the board is
+    unplugged; closing the session's window without closing the session
+    frees the board. A pause no longer draws the last value on for up to
+    5 s after it (`pre-2026-11-28`, checked on macOS).
 - [ ] **Freeze the formats.** Once in the engine, `debug.toml`, the debug
   map, the protocol (version 3) and the tool names are public. Review them
   once more before porting.
